@@ -1,40 +1,60 @@
-# DevDays Feedback 📣
+# DevDays Feedback App
 
-A fast, practical conference-feedback app built with **Bun + TypeScript + SQLite** (zero external dependencies). Perfect for collecting real-time audience feedback during live talks.
+A Bun + TypeScript + SQLite feedback and live Q&A app for Josh Mandel's DevDays 2026 sessions.
+
+The app is intentionally lightweight: no accounts, no external database, and no attendee login. Organizers use a global admin key; presenters/moderators receive room-scoped capability links.
 
 ## Features
 
 | Feature | Details |
 |---|---|
-| **QR codes** | Every session gets a dedicated QR code page to project/display |
-| **Quick ratings** | 1–5 star rating with hover feedback |
-| **Sentiment** | One-tap 😄 / 🤔 / 😵 emoji buttons |
-| **Quick tags** | Predefined chips (Engaging, Too fast, More demos, …) |
-| **Free text** | Optional comment textarea |
-| **Dictation** | Browser speech-to-text mic button (progressive enhancement) |
-| **Admin panel** | Live stats: total responses, average rating, sentiment breakdown |
-| **CSV export** | Download all feedback as a CSV file |
-| **Session control** | Open / close sessions to stop accepting responses |
-| **SQLite** | All data stored locally in `feedback.db` via `bun:sqlite` |
+| Public attendee forms | `/s/:sessionId` pages for ratings, clarity state, tags, comments, and Q&A |
+| QR codes | Absolute attendee URLs with white quiet zones for reliable scanning |
+| Live Q&A | Public question submit, simple upvotes, canonical queue, slides overlay |
+| Q&A moderation | Pin/unpin, answer, hide/restore, open/pause/close Q&A |
+| Capability links | Organizer sends `/r/claim/roomcap_...`; presenter gets room-scoped admin access |
+| Global admin | Organizer can create/list/manage all rooms and rotate/revoke room links |
+| CSV export | Download feedback per session |
+| SQLite | Runtime state stored locally in `feedback.db` |
+
+## Repository context
+
+This app is part of the parent `devdays-2026` repository:
+
+```txt
+devdays-2026/
+  prep/talks.md          # canonical talk list
+  decks/                 # generated decks
+  feedback-app/          # this app
+```
+
+Runtime files are intentionally gitignored and should not be committed:
+
+```txt
+feedback.db
+.admin-key
+.admin-key.env
+node_modules/
+.qa-agent/
+```
 
 ## Quick start
 
-```bash
-# Run (no install needed — bun:sqlite is built-in)
-bun run src/server.ts
-# or with watch mode:
-bun --watch run src/server.ts
-```
-
-Open http://localhost:8000 and unlock the admin console to create sessions. In local/dev only, if `ADMIN_KEY` is unset, use the clearly warned fallback key `devdays-admin`.
-
-### Using make
+From `feedback-app/`:
 
 ```bash
-make start     # production
-make dev       # watch/auto-reload
-make typecheck # TypeScript check
+bun install
+bun run typecheck
+PORT=8000 BASE_URL=http://localhost:8000 ADMIN_KEY='local-dev-key' bun run src/server.ts
 ```
+
+Then open:
+
+```txt
+http://localhost:8000/admin
+```
+
+If `ADMIN_KEY` is unset, the app uses a loudly warned local fallback key `devdays-admin`. Do not rely on that for a public deployment.
 
 ## Environment variables
 
@@ -43,58 +63,109 @@ make typecheck # TypeScript check
 | `PORT` | `8000` | HTTP port to listen on |
 | `DB_PATH` | `./feedback.db` | SQLite database file path |
 | `BASE_URL` | `https://devdays-feedback.exe.xyz` | Public base URL for QR codes and room operator links |
-| `ADMIN_KEY` | dev fallback: `devdays-admin` | Global admin unlock key. If unset, the UI/logs clearly warn and use the dev-only fallback. Set this in production. |
-
-Set `BASE_URL` so the QR codes encode your actual public URL:
-
-```bash
-BASE_URL=https://myvm.exe.dev bun run src/server.ts
-```
-
-## Presenter workflow
-
-1. Organizer unlocks `/admin` with `ADMIN_KEY`, provisions the session, and sends the presenter packet/operator capability link
-2. The QR code page appears — project it on screen or share the link
-3. Attendees scan → fill in the 1-page form → done in under 10 seconds
-4. Presenter opens the `/r/claim/roomcap_...` link to receive room-scoped access, then manages `/admin/<id>`
-
-## File structure
-
-```
-devdays-feedback/
-  src/server.ts   # Single-file Bun server (routes + DB + HTML templates)
-  feedback.db     # Auto-created SQLite database
-  package.json
-  tsconfig.json
-  Makefile
-  srv.service     # systemd unit for production
-  README.md
-```
-
-## Systemd (production)
-
-```bash
-sudo cp srv.service /etc/systemd/system/devdays-feedback.service
-# Edit WorkingDirectory / BASE_URL as needed
-sudo systemctl daemon-reload
-sudo systemctl enable --now devdays-feedback
-```
-
-## Database schema
-
-```sql
-sessions (id, title, description, presenter, created_at, active)
-feedback (id, session_id, rating, sentiment, comment, tags, submitted_at)
-```
-
+| `ADMIN_KEY` | dev fallback: `devdays-admin` | Global admin unlock key; set in production |
 
 ## Loading DevDays talks
 
-From this repository root, populate the local SQLite database from `prep/talks.md`:
+Populate the local SQLite database from the parent repo's `prep/talks.md`:
 
 ```bash
 cd feedback-app
 DB_PATH=./feedback.db TALKS_MD=../prep/talks.md bun run load-talks
 ```
 
-This clears existing sessions/feedback/Q&A runtime data and creates one session per listed DevDays talk. Runtime state (`feedback.db`) and admin secrets (`.admin-key*`) are intentionally gitignored.
+This clears existing runtime data and creates one session per listed DevDays talk.
+
+Current stable IDs generated by the loader:
+
+| ID | Talk |
+|---|---|
+| `ssmart` | SMART Across the Ecosystem: App Launch, Permission Tickets, and More |
+| `skclipboard` | Kill the Clipboard: Frictionless Intake with Patient-Shared Data |
+| `sdigcred` | Beyond "All-or-Nothing" QR Codes: Digital Credentials API, SMART Health Check-in, and Selective Disclosure JWTs |
+| `sllmagents` | Let's Build: Making LLM Agents Work with Health Data (FHIR & EHI) |
+| `scoin` | Toward Conversational Interop: Agents Structuring the Long Tail on the Fly |
+
+## Organizer workflow
+
+1. Visit `/admin` and unlock with `ADMIN_KEY`.
+2. Create/provision rooms, or run `bun run load-talks` to populate from `prep/talks.md`.
+3. Open a room admin page.
+4. Copy the presenter/operator packet.
+5. Send the presenter their room operator capability link.
+6. Project the attendee QR or attendee URL.
+
+## Presenter/operator workflow
+
+1. Open the organizer-provided `/r/claim/roomcap_...` link.
+2. The app sets a room-scoped session cookie and redirects to `/admin/:sessionId`.
+3. Manage only that room:
+   - open/close feedback
+   - export CSV
+   - open Q&A console
+   - moderate questions
+   - view QR page
+
+## Attendee workflow
+
+Attendees do not log in.
+
+- Feedback form: `/s/:sessionId`
+- Q&A submit/upvote: embedded on the same attendee page
+- Slides Q&A overlay: `/slides/s/:sessionId/qa`
+
+## Systemd deployment
+
+The committed `srv.service` is configured for this exe.dev VM layout:
+
+```txt
+WorkingDirectory=/home/exedev/devdays-2026/feedback-app
+Environment=PORT=8000
+Environment=BASE_URL=https://devdays-feedback.exe.xyz
+Environment=DB_PATH=./feedback.db
+EnvironmentFile=-/home/exedev/devdays-2026/feedback-app/.admin-key.env
+```
+
+Install/update the service:
+
+```bash
+sudo cp feedback-app/srv.service /etc/systemd/system/devdays-feedback.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now devdays-feedback.service
+```
+
+Store the admin key outside git:
+
+```bash
+cd feedback-app
+printf 'ADMIN_KEY=your-four-word-or-better-key\n' > .admin-key.env
+chmod 600 .admin-key.env
+sudo systemctl restart devdays-feedback.service
+```
+
+## Useful commands
+
+```bash
+# Typecheck
+bun run typecheck
+
+# Run locally
+PORT=8000 BASE_URL=http://localhost:8000 ADMIN_KEY='local-dev-key' bun run src/server.ts
+
+# Populate talks
+DB_PATH=./feedback.db TALKS_MD=../prep/talks.md bun run load-talks
+
+# Check service
+systemctl status devdays-feedback.service --no-pager
+journalctl -u devdays-feedback.service -f
+```
+
+## Code map
+
+```txt
+src/server.ts          # Bun HTTP server, routes, DB migrations, HTML templates
+src/cli.ts             # Small CLI for sessions/Q&A state
+src/qa-worker.ts       # Codex/GPT-backed Q&A worker with deterministic fallback
+scripts/load-talks.ts  # Loads prep/talks.md into SQLite sessions
+srv.service            # systemd unit
+```

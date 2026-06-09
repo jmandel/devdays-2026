@@ -832,6 +832,12 @@ function accessPanel(sessionId: string, auth: AuthContext, freshToken: string | 
 
 // ─── Pages ────────────────────────────────────────────────────────────────────
 
+function publicLandingPage() {
+  const rooms = db.query<{ id: string; title: string; presenter: string; description: string; slides_url: string }, []>("SELECT id,title,presenter,description,slides_url FROM sessions WHERE active = 1 ORDER BY CASE id WHEN 'smart' THEN 1 WHEN 'ktc' THEN 2 WHEN 'checkin' THEN 3 WHEN 'llms' THEN 4 WHEN 'coin' THEN 5 ELSE 9 END, title").all();
+  const cards = rooms.map((s) => `<div class="qa-item" style="margin-top:12px"><div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap"><div><strong style="font-size:1.05rem">${escHtml(s.title)}</strong>${s.presenter ? `<p class="muted mt-8">${escHtml(s.presenter)}</p>` : ""}${s.description ? `<p class="muted mt-8">${escHtml(s.description)}</p>` : ""}<p class="muted mt-8">Room: <code>${escHtml(s.id)}</code></p></div><a class="btn btn-primary btn-sm" href="/t/${s.id}">Open room</a></div></div>`).join("");
+  return layout("DevDays rooms", `<main class="container"><section class="card"><p class="eyebrow">DevDays Feedback</p><h1 style="color:var(--ink);font-size:2rem">Choose a room</h1><p class="muted mt-8">Open the public page for slides, live Q&A, and private feedback.</p>${cards || `<p class="muted mt-16">No public rooms are open right now.</p>`}<div class="mt-24"><a class="btn btn-ghost btn-sm" href="/admin">Operator login</a></div></section></main>`, false);
+}
+
 function homePage(auth: AuthContext) {
   const sessions = db.query<
     { id: string; title: string; presenter: string; created_at: number; active: number; qa_state: QaState; count: number },
@@ -1117,22 +1123,17 @@ function qaAdminPage(sessionId: string, auth: AuthContext) {
       ${q.status === "hidden" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/restore"><button class="btn btn-outline btn-sm">restore</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/hide"><button class="btn btn-danger btn-sm">hide</button></form>`}
     </div>
   </div>`;
-  const qaIsOpen = session.qa_state === "open";
-  const qaStateLabel = qaIsOpen ? "Accepting audience questions" : "Not accepting new questions";
-  const qaStateClass = qaIsOpen ? "pill-active" : "pill-warn";
   const body = `<div class="admin-shell">
     <div class="card admin-hero">
       <div>
-        <p class="eyebrow">Q&A control room</p>
+        <p class="eyebrow">Run Q&A</p>
         <h1 style="color:var(--ink);text-transform:uppercase">${escHtml(session.title)}</h1>
-        <p class="muted">Review questions, mark answered, and control whether new questions are accepted.</p>
-        <div class="qa-status ${qaStateClass}" data-qa-status style="margin-top:10px">${qaStateLabel}</div>
+        <p class="muted">Audience questions are accepted and synthesized automatically. Use this view to mark presenter-ready themes answered.</p>
       </div>
       <div class="qa-toolbar">
-        ${qaSwitch(session.id, qaIsOpen)}
-        <form method="POST" action="/admin/talks/${session.id}/run"><button class="btn btn-primary btn-sm">Synthesize themes</button></form>
         <a class="btn btn-outline btn-sm" href="/slides/t/${session.id}/qa" target="_blank">Open projector Q&A</a>
-        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}">feedback</a>
+        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}/ai-run" target="_blank" rel="noopener">AI processing log</a>
+        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}">control room</a>
       </div>
     </div>
     <div class="qa-tabs mt-16">
@@ -1312,27 +1313,32 @@ function qrPage(sessionId: string, auth: AuthContext, freshToken: string | null 
 
   const sessionUrl = sessionPublicUrl(session.id);
 
-  const body = `<div class="admin-shell text-center">
-  <div class="card" style="padding:34px;margin-top:24px">
-    <h1 style="font-size:1.6rem;margin-bottom:4px">${escHtml(session.title)}</h1>
-    ${session.presenter ? `<p class="muted" style="margin-bottom:20px">${escHtml(session.presenter)}</p>` : `<div style="margin-bottom:20px"></div>`}
-    <div style="display:inline-block;background:#fff;padding:24px;margin:0 auto 20px;border:1px solid var(--line-hot);box-shadow:0 0 30px rgba(50,255,154,.16)"><div id="qrcode" style="display:flex;justify-content:center"></div></div>
-    <p style="font-size:0.95rem;background:var(--bg);padding:10px 16px;border-radius:8px;word-break:break-all;margin-bottom:20px">
-      ${escHtml(sessionUrl)}
-    </p>
-    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-      <a href="/t/${session.id}" class="btn btn-primary" target="_blank">open attendee page form</a>
-      <a href="/admin/talks/${session.id}" class="btn btn-outline">back to control room</a>
+  const body = `<div class="qr-show shell text-center">
+  <section class="qr-stage card">
+    <div class="qr-title">
+      <p class="eyebrow">Scan for public Q&A + feedback</p>
+      <h1>${escHtml(session.title)}</h1>
+      ${session.presenter ? `<p class="muted">${escHtml(session.presenter)}</p>` : ""}
     </div>
-  </div>
-  ${accessPanel(session.id, auth, freshToken)}
+    <div class="qr-code-frame"><div id="qrcode" style="display:flex;justify-content:center"></div></div>
+    <p class="qr-url">${escHtml(sessionUrl)}</p>
+    <div class="qr-actions">
+      <a href="/t/${session.id}" class="btn btn-outline btn-sm" target="_blank">Open public page</a>
+      <a href="/admin/talks/${session.id}" class="btn btn-ghost btn-sm">Back to control room</a>
+    </div>
+  </section>
+  <details class="qr-operator"><summary>Room operator access</summary>${accessPanel(session.id, auth, freshToken)}</details>
 </div>
+<style>
+  .qr-show{max-width:none;min-height:calc(100vh - 104px);display:grid;place-items:center;padding:18px 24px 42px}.qr-stage{width:min(96vw,1200px);padding:clamp(18px,3vw,34px);margin:0}.qr-title h1{font-size:clamp(1.5rem,3.2vw,3.2rem);line-height:1.05;margin:4px auto 0;max-width:1050px}.qr-title .muted{font-size:clamp(1rem,1.6vw,1.5rem);margin-top:8px}.qr-code-frame{display:inline-block;background:#fff;padding:clamp(16px,2vw,28px);margin:clamp(14px,2vw,24px) auto 14px;border:2px solid var(--line-hot);box-shadow:0 0 38px rgba(50,255,154,.22)}.qr-url{font-size:clamp(.95rem,1.6vw,1.5rem);background:var(--bg);padding:12px 18px;border-radius:8px;word-break:break-all;margin:0 auto;max-width:980px;color:var(--ink)}.qr-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px;opacity:.72}.qr-operator{width:min(96vw,1200px);margin-top:12px;color:var(--muted);opacity:.55}.qr-operator[open]{opacity:1}.qr-operator summary{cursor:pointer;font-weight:900}.qr-operator .card{text-align:left;margin-top:10px}@media(max-height:760px){.qr-show{place-items:start center}.qr-title h1{font-size:clamp(1.25rem,2.5vw,2.2rem)}.qr-code-frame{margin:10px auto;padding:14px}.qr-url{font-size:.95rem}.qr-actions{margin-top:10px}.qr-operator{display:none}}
+</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
+  const size = Math.floor(Math.min(window.innerWidth * 0.72, (window.innerHeight - 280) * 0.82, 680));
   new QRCode(document.getElementById("qrcode"), {
     text: ${JSON.stringify(sessionUrl)},
-    width: 260,
-    height: 260,
+    width: Math.max(360, size),
+    height: Math.max(360, size),
     colorDark: "#000000",
     colorLight: "#ffffff",
     correctLevel: QRCode.CorrectLevel.M
@@ -1595,7 +1601,7 @@ Bun.serve({
     const isAdminPost = method === "POST" && (path === "/sessions" || path === "/api/admin/sessions" || path.startsWith("/admin/") || path.startsWith("/api/admin/") || path === "/logout");
     if (isAdminPost && !sameOriginOk(req)) return html("<h1>Forbidden</h1>", 403);
 
-    if (path === "/" && method === "GET") return redirect("/admin");
+    if (path === "/" && method === "GET") return html(publicLandingPage());
 
     if (path === "/api/admin/me" && method === "GET") {
       return json({ authenticated: !!auth, scope: auth?.scope ?? null, session_id: auth?.session_id ?? null });

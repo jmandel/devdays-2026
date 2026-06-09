@@ -5,8 +5,9 @@
     "moduleResolution": "bundler",
     "lib": ["ESNext", "DOM"],
     "strict": true,
+    "jsx": "react-jsx",
     "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

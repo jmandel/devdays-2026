@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import appHtml from "./ui/index.html";
 
 // ─── Database setup ───────────────────────────────────────────────────────────
 
@@ -381,6 +382,19 @@ Use the management link to open/close feedback, export responses, and moderate l
 Do not share the management link with attendees.`;
 }
 
+
+function wantsJson(req: Request) {
+  const accept = req.headers.get("accept") || "";
+  return accept.includes("application/json") || req.headers.get("content-type")?.includes("application/json");
+}
+
+function emitQaRefresh(sessionId: string) {
+  qaPayload(sessionId, "public");
+  qaPayload(sessionId, "presenter");
+  qaPayload(sessionId, "slides");
+  emitQaUpdate(sessionId);
+}
+
 function sameOriginOk(req: Request) {
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
@@ -427,16 +441,18 @@ function publicQuestions(sessionId: string, includeAnswered = false) {
   `).all(sessionId);
 }
 
-type SseClient = { sessionId: string; controller: ReadableStreamDefaultController<Uint8Array> };
+type SseClient = { sessionId: string; controller: ReadableStreamDefaultController<Uint8Array>; includePresenter: boolean };
 const sseClients = new Set<SseClient>();
 const sseEncoder = new TextEncoder();
 
 function emitQaUpdate(sessionId: string) {
-  const payload = combinedQaPayload(sessionId);
-  if (!payload) return;
-  const frame = `event: qa\ndata: ${JSON.stringify(payload)}\n\n`;
+  const publicPayload = attendeeQaPayload(sessionId);
+  const presenterPayload = presenterQaPayload(sessionId);
+  if (!publicPayload && !presenterPayload) return;
   for (const client of [...sseClients]) {
     if (client.sessionId !== sessionId) continue;
+    const payload = client.includePresenter ? { public: publicPayload, presenter: presenterPayload } : { public: publicPayload };
+    const frame = `event: qa\ndata: ${JSON.stringify(payload)}\n\n`;
     try { client.controller.enqueue(sseEncoder.encode(frame)); } catch { sseClients.delete(client); }
   }
 }
@@ -564,8 +580,7 @@ async function processQaFallback(sessionId: string, limit = 25) {
     "SELECT id, raw_text FROM qa_question_submissions WHERE session_id = ? AND status = 'pending' ORDER BY submitted_at ASC LIMIT ?"
   ).all(sessionId, limit);
   for (const sub of pending) await promoteSubmissionFallback(sessionId, sub.id, sub.raw_text);
-  qaPayload(sessionId, "public"); qaPayload(sessionId, "presenter"); qaPayload(sessionId, "slides");
-  emitQaUpdate(sessionId);
+  emitQaRefresh(sessionId);
   return pending.length;
 }
 
@@ -615,7 +630,7 @@ async function runQueuedQaProcessing(sessionId: string, job: QaQueueJob) {
     db.query("INSERT INTO qa_agent_runs (id, session_id, status, finished_at, error, summary) VALUES (?, ?, 'fallback', unixepoch(), ?, ?)")
       .run(runId, sessionId, `worker failed with exit ${code}: ${stderrText.slice(0, 800)}`, `server fallback promoted/merged ${n} queued submissions`);
   }
-  qaPayload(sessionId, "public"); qaPayload(sessionId, "presenter"); qaPayload(sessionId, "slides");
+  emitQaRefresh(sessionId);
   if (qaQueueJobs.get(sessionId) === job) qaQueueJobs.delete(sessionId);
   const latest = db.query<{ id: string; status: string }, [string]>("SELECT id, status FROM qa_agent_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT 1").get(sessionId);
   return { runId: latest?.id ?? null, status: latest?.status ?? (code === 0 ? "done" : "fallback") };
@@ -1561,15 +1576,23 @@ const PORT = parseInt(process.env.PORT ?? "8000", 10);
 
 Bun.serve({
   port: PORT,
+  routes: {
+    "/t/:id": appHtml,
+    "/admin/talks/:id": appHtml,
+  },
   async fetch(req) {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method;
     const auth = await getAuth(req);
-    const isAdminPost = method === "POST" && (path === "/sessions" || path === "/api/admin/sessions" || path.startsWith("/admin/") || path === "/logout");
+    const isAdminPost = method === "POST" && (path === "/sessions" || path === "/api/admin/sessions" || path.startsWith("/admin/") || path.startsWith("/api/admin/") || path === "/logout");
     if (isAdminPost && !sameOriginOk(req)) return html("<h1>Forbidden</h1>", 403);
 
     if (path === "/" && method === "GET") return redirect("/admin");
+
+    if (path === "/api/admin/me" && method === "GET") {
+      return json({ authenticated: !!auth, scope: auth?.scope ?? null, session_id: auth?.session_id ?? null });
+    }
 
     if ((path === "/admin" || path === "/admin/dashboard") && method === "GET") return auth?.scope === "global_admin" ? html(homePage(auth)) : html(lockedConsole("admin"));
 
@@ -1636,8 +1659,20 @@ Bun.serve({
     const adminMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)$/);
     if (adminMatch && method === "GET") {
       if (!canManageRoom(auth, adminMatch[1])) return html(lockedConsole("room"), 401);
-      const page = adminSessionPage(adminMatch[1], auth);
-      return page ? html(page) : html("<h1>Session not found</h1>", 404);
+      const exists = db.query<{ id: string }, [string]>("SELECT id FROM sessions WHERE id = ?").get(adminMatch[1]);
+      return exists ? html(String.raw`<!doctype html><html><head><title>DevDays Feedback</title><script type="module" src="/src/ui/main.tsx"></script></head><body><div id="root"></div></body></html>`) : html("<h1>Session not found</h1>", 404);
+    }
+
+    const qaStateApiMatch = path.match(/^\/api\/admin\/talks\/([a-z0-9]+)\/state$/);
+    if (qaStateApiMatch && method === "POST") {
+      const sid = qaStateApiMatch[1];
+      if (!canManageRoom(auth, sid)) return json({ error: "unauthorized" }, 401);
+      const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+      const state = ["open", "paused", "closed"].includes(String(body.state)) ? String(body.state) : "open";
+      db.query("UPDATE sessions SET qa_state = ? WHERE id = ?").run(state, sid);
+      recordModeratorAction(sid, null, `state:${state}`);
+      emitQaRefresh(sid);
+      return json({ ok: true, session_id: sid, qa_state: state, presenter: presenterQaPayload(sid), public: attendeeQaPayload(sid) });
     }
 
     const qaStateMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/state\/(open|paused|closed)$/);
@@ -1646,10 +1681,24 @@ Bun.serve({
       if (!canManageRoom(auth, sid)) return html(lockedConsole("room"), 401);
       db.query("UPDATE sessions SET qa_state = ? WHERE id = ?").run(state, sid);
       recordModeratorAction(sid, null, `state:${state}`);
-      if ((req.headers.get("accept") || "").includes("application/json")) {
-        return json({ ok: true, session_id: sid, qa_state: state });
+      emitQaRefresh(sid);
+      if (wantsJson(req)) {
+        return json({ ok: true, session_id: sid, qa_state: state, presenter: presenterQaPayload(sid), public: attendeeQaPayload(sid) });
       }
       return redirect(`/admin/talks/${sid}#questions`);
+    }
+
+    const qaRunApiMatch = path.match(/^\/api\/admin\/talks\/([a-z0-9]+)\/qa\/run$/);
+    if (qaRunApiMatch && method === "POST") {
+      const sid = qaRunApiMatch[1];
+      if (!canManageRoom(auth, sid)) return json({ error: "unauthorized" }, 401);
+      await runQueuedQaProcessing(sid, { timer: null, proc: null, canceled: false }).catch(async () => {
+        const n = await processQaFallback(sid, 100);
+        const rid = randomId("run");
+        db.query("INSERT INTO qa_agent_runs (id, session_id, status, finished_at, summary) VALUES (?, ?, 'fallback', unixepoch(), ?)").run(rid, sid, `api fallback promoted/merged ${n} pending submissions`);
+      });
+      emitQaRefresh(sid);
+      return json({ ok: true, presenter: presenterQaPayload(sid), public: attendeeQaPayload(sid) });
     }
 
     const qaRunMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/run$/);
@@ -1661,6 +1710,25 @@ Bun.serve({
       const n = await processQaFallback(sid, 100);
       db.query("UPDATE qa_agent_runs SET finished_at = unixepoch(), summary = ? WHERE id = ?").run(`fallback promoted/merged ${n} pending submissions`, rid);
       return redirect(`/admin/talks/${sid}`);
+    }
+
+    const qaQuestionActionApiMatch = path.match(/^\/api\/admin\/talks\/([a-z0-9]+)\/questions\/([a-z0-9]+)\/actions$/);
+    if (qaQuestionActionApiMatch && method === "POST") {
+      const [, sid, qid] = qaQuestionActionApiMatch;
+      if (!canManageRoom(auth, sid)) return json({ error: "unauthorized" }, 401);
+      const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+      const action = String(body.action ?? "");
+      if (!["pin", "unpin", "answer", "hide", "restore"].includes(action)) return json({ error: "bad_action" }, 400);
+      const q = db.query<QaQuestionRow, [string, string]>("SELECT * FROM qa_questions WHERE id = ? AND session_id = ?").get(qid, sid);
+      if (!q) return json({ error: "not_found" }, 404);
+      if (action === "pin") db.query("UPDATE qa_questions SET status='pinned', pinned=1, human_override=1, updated_at=unixepoch() WHERE id=?").run(qid);
+      if (action === "unpin") db.query("UPDATE qa_questions SET status='live', pinned=0, human_override=1, updated_at=unixepoch() WHERE id=?").run(qid);
+      if (action === "answer") db.query("UPDATE qa_questions SET status='answered', pinned=0, human_override=1, answered_at=unixepoch(), updated_at=unixepoch() WHERE id=?").run(qid);
+      if (action === "hide") db.query("UPDATE qa_questions SET status='hidden', pinned=0, human_override=1, hidden_at=unixepoch(), updated_at=unixepoch() WHERE id=?").run(qid);
+      if (action === "restore") db.query("UPDATE qa_questions SET status='live', hidden_at=NULL, answered_at=NULL, human_override=1, updated_at=unixepoch() WHERE id=?").run(qid);
+      recordModeratorAction(sid, qid, action);
+      emitQaRefresh(sid);
+      return json({ ok: true, action, question: db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE id=?").get(qid), presenter: presenterQaPayload(sid), public: attendeeQaPayload(sid) });
     }
 
     const qaQuestionActionMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/questions\/([a-z0-9]+)\/(pin|unpin|answer|hide|restore)$/);
@@ -1675,10 +1743,9 @@ Bun.serve({
       if (action === "hide") db.query("UPDATE qa_questions SET status='hidden', pinned=0, human_override=1, hidden_at=unixepoch(), updated_at=unixepoch() WHERE id=?").run(qid);
       if (action === "restore") db.query("UPDATE qa_questions SET status='live', hidden_at=NULL, answered_at=NULL, human_override=1, updated_at=unixepoch() WHERE id=?").run(qid);
       recordModeratorAction(sid, qid, action);
-      qaPayload(sid, "public"); qaPayload(sid, "presenter"); qaPayload(sid, "slides");
-      emitQaUpdate(sid);
+      emitQaRefresh(sid);
       const updated = db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE id=?").get(qid);
-      if ((req.headers.get("accept") || "").includes("application/json")) return json({ ok: true, action, question: updated });
+      if (wantsJson(req)) return json({ ok: true, action, question: updated, presenter: presenterQaPayload(sid), public: attendeeQaPayload(sid) });
       return redirect(`/admin/talks/${sid}#questions`);
     }
 
@@ -1766,15 +1833,37 @@ Bun.serve({
       return json({ ok: true }, 202, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
     }
 
+    const sessionFeedbackMatch = path.match(/^\/api\/talks\/([a-z0-9]+)\/session-feedback$/);
+    if (sessionFeedbackMatch && method === "POST") {
+      const sid = sessionFeedbackMatch[1];
+      const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sid);
+      const { key, isNew } = getSubmitterKey(req);
+      const cookieHeaders: Record<string, string> = isNew ? { "Set-Cookie": cookieHeader(key) } : {};
+      if (!session) return json({ error: "not_found" }, 404, cookieHeaders);
+      const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+      const rating = body.rating == null || body.rating === "" ? null : Math.max(1, Math.min(5, Number(body.rating) || 0));
+      const sentiment = body.sentiment == null ? null : String(body.sentiment).slice(0, 40);
+      const comment = body.comment == null ? null : String(body.comment).trim().slice(0, 2000) || null;
+      const rawTags = Array.isArray(body.tags) ? body.tags : [];
+      const tags = JSON.stringify(rawTags.slice(0, 10).map(String));
+      const fid = randomId("f");
+      db.query("INSERT INTO feedback (id, session_id, rating, sentiment, comment, tags) VALUES (?, ?, ?, ?, ?, ?)").run(fid, sid, rating, sentiment, comment, tags);
+      recordInteraction(sid, key, "feedback", sentiment ?? rating, comment, fid, { rating, sentiment, tags: rawTags });
+      return json({ ok: true, feedback_id: fid }, 202, cookieHeaders);
+    }
+
     const qaEventsMatch = path.match(/^\/api\/sessions\/([a-z0-9]+)\/qa\/events$/);
     if (qaEventsMatch && method === "GET") {
       const sid = qaEventsMatch[1];
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
-          const client = { sessionId: sid, controller };
+          const includePresenter = canManageRoom(auth, sid);
+          const client = { sessionId: sid, controller, includePresenter };
           sseClients.add(client);
-          const payload = combinedQaPayload(sid);
-          if (payload) controller.enqueue(sseEncoder.encode(`event: qa\ndata: ${JSON.stringify(payload)}\n\n`));
+          const publicPayload = attendeeQaPayload(sid);
+          const presenterPayload = includePresenter ? presenterQaPayload(sid) : null;
+          const payload = includePresenter ? { public: publicPayload, presenter: presenterPayload } : { public: publicPayload };
+          if (publicPayload || presenterPayload) controller.enqueue(sseEncoder.encode(`event: qa\ndata: ${JSON.stringify(payload)}\n\n`));
           const keepAlive = setInterval(() => {
             try { controller.enqueue(sseEncoder.encode(`: keepalive\n\n`)); } catch { clearInterval(keepAlive); sseClients.delete(client); }
           }, 15000);
@@ -1832,7 +1921,7 @@ Bun.serve({
         db.query("INSERT INTO qa_question_submissions (id, session_id, submitter_key, raw_text, normalized_hash) VALUES (?, ?, ?, ?, ?)").run(qsid, sid, key, text, hash);
         recordInteraction(sid, key, "question", null, text, qsid);
         scheduleQaProcessing(sid);
-        emitQaUpdate(sid);
+        emitQaRefresh(sid);
         console.info(JSON.stringify({ event: "qa_question_queued", session_id: sid, submission_id: qsid, length: text.length }));
         return json({ ok: true, status: "queued", submission_id: qsid }, 202, cookieHeaders);
       } catch (err) {
@@ -1855,8 +1944,7 @@ Bun.serve({
       recordInteraction(sid, key, "question_vote", voteValue, null, qid);
       if (raw?.question_id) recomputeSupport(raw.question_id);
       if (theme) recomputeSupport(qid);
-      qaPayload(sid, "public"); qaPayload(sid, "presenter"); qaPayload(sid, "slides");
-      emitQaUpdate(sid);
+      emitQaRefresh(sid);
       const support = raw ? rawQuestionSupport(qid) : db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE id=?").get(qid)?.support_count ?? 0;
       return json({ ok: true, question_id: qid, support_count: support }, 200, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
     }

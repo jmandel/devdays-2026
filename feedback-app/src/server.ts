@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ─── Database setup ───────────────────────────────────────────────────────────
 
@@ -95,6 +97,7 @@ addColumnIfMissing("sessions", "qa_enabled", "qa_enabled INTEGER NOT NULL DEFAUL
 addColumnIfMissing("sessions", "slides_url", "slides_url TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("sessions", "short_code", "short_code TEXT");
 addColumnIfMissing("sessions", "feedback_state", "feedback_state TEXT NOT NULL DEFAULT 'open'");
+addColumnIfMissing("sessions", "ai_context", "ai_context TEXT NOT NULL DEFAULT ''");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS qa_questions (
@@ -180,6 +183,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_qa_submissions_session_status ON qa_question_submissions(session_id, status, submitted_at);
 `);
 addColumnIfMissing("qa_question_votes", "value", "value INTEGER NOT NULL DEFAULT 1");
+addColumnIfMissing("qa_question_votes", "target_kind", "target_kind TEXT NOT NULL DEFAULT 'theme'");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS attendee_interactions (
@@ -270,7 +274,7 @@ type QaQuestionStatus = "new" | "live" | "pinned" | "answered" | "held" | "hidde
 
 type SessionRow = {
   id: string; title: string; description: string; presenter: string; created_at: number; active: number;
-  qa_state: QaState; qa_mode: string; qa_display_mode: string; qa_enabled: number; slides_url: string; short_code: string | null; feedback_state: string;
+  qa_state: QaState; qa_mode: string; qa_display_mode: string; qa_enabled: number; slides_url: string; short_code: string | null; feedback_state: string; ai_context: string;
 };
 
 type QaQuestionRow = {
@@ -423,9 +427,57 @@ function publicQuestions(sessionId: string, includeAnswered = false) {
   `).all(sessionId);
 }
 
+type SseClient = { sessionId: string; controller: ReadableStreamDefaultController<Uint8Array> };
+const sseClients = new Set<SseClient>();
+const sseEncoder = new TextEncoder();
+
+function emitQaUpdate(sessionId: string) {
+  const payload = attendeeQaPayload(sessionId);
+  if (!payload) return;
+  const frame = `event: qa\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of [...sseClients]) {
+    if (client.sessionId !== sessionId) continue;
+    try { client.controller.enqueue(sseEncoder.encode(frame)); } catch { sseClients.delete(client); }
+  }
+}
+
+function rawQuestionSupport(rawId: string) {
+  return db.query<{ c: number }, [string]>("SELECT COALESCE(SUM(value), 0) AS c FROM qa_question_votes WHERE target_kind='raw' AND question_id = ?").get(rawId)?.c ?? 0;
+}
+
+function attendeeQaPayload(sessionId: string) {
+  const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
+  if (!session) return null;
+  const rows = db.query<{ id: string; raw_text: string; status: string; question_id: string | null; submitted_at: number; theme_status: string | null; answered_at: number | null; hidden_at: number | null }, [string]>(`
+    SELECT s.id, s.raw_text, s.status, s.question_id, s.submitted_at,
+           q.status AS theme_status, q.answered_at, q.hidden_at
+    FROM qa_question_submissions s
+    LEFT JOIN qa_questions q ON q.id = s.question_id
+    WHERE s.session_id = ? AND s.status NOT IN ('rejected')
+    ORDER BY CASE WHEN q.status='answered' THEN 1 ELSE 0 END, s.submitted_at DESC
+    LIMIT 80
+  `).all(sessionId);
+  const questions = rows.map((r) => {
+    const answered = r.theme_status === "answered" || !!r.answered_at;
+    const hidden = r.theme_status === "hidden" || !!r.hidden_at || r.status === "held";
+    return {
+      id: r.id,
+      text: r.raw_text,
+      status: answered ? "answered" : hidden ? "hidden" : r.question_id ? "grouped" : "queued",
+      support_count: rawQuestionSupport(r.id),
+      created_at: r.submitted_at,
+      theme_id: r.question_id,
+      answered,
+      hidden,
+    };
+  }).filter((q) => !q.hidden);
+  return { view: "public", generated_at: Math.floor(Date.now() / 1000), session: sessionPacket(session), questions };
+}
+
 function qaPayload(sessionId: string, view: "public" | "presenter" | "slides") {
   const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
   if (!session) return null;
+  if (view === "public") return attendeeQaPayload(sessionId);
   const includeAnswered = view !== "slides";
   const questions = publicQuestions(sessionId, includeAnswered).map((q) => ({
     id: q.id,
@@ -484,7 +536,60 @@ async function processQaFallback(sessionId: string, limit = 25) {
   ).all(sessionId, limit);
   for (const sub of pending) await promoteSubmissionFallback(sessionId, sub.id, sub.raw_text);
   qaPayload(sessionId, "public"); qaPayload(sessionId, "presenter"); qaPayload(sessionId, "slides");
+  emitQaUpdate(sessionId);
   return pending.length;
+}
+
+type QaQueueJob = { timer: ReturnType<typeof setTimeout> | null; proc: ReturnType<typeof Bun.spawn> | null; canceled: boolean };
+const qaQueueJobs = new Map<string, QaQueueJob>();
+const QA_DEBOUNCE_MS = 900;
+
+function scheduleQaProcessing(sessionId: string) {
+  const previous = qaQueueJobs.get(sessionId);
+  if (previous?.timer) clearTimeout(previous.timer);
+  if (previous?.proc) {
+    previous.canceled = true;
+    previous.proc.kill();
+    console.info(JSON.stringify({ event: "qa_worker_canceled_for_new_submission", session_id: sessionId }));
+  }
+
+  const job: QaQueueJob = { timer: null, proc: null, canceled: false };
+  job.timer = setTimeout(() => {
+    job.timer = null;
+    runQueuedQaProcessing(sessionId, job).catch((err) => {
+      if (!job.canceled) console.error(JSON.stringify({ event: "qa_worker_background_error", session_id: sessionId, error: String(err) }));
+    });
+  }, QA_DEBOUNCE_MS);
+  qaQueueJobs.set(sessionId, job);
+}
+
+async function runQueuedQaProcessing(sessionId: string, job: QaQueueJob) {
+  const pending = db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM qa_question_submissions WHERE session_id = ? AND status = 'pending'").get(sessionId)?.c ?? 0;
+  if (pending === 0) {
+    if (qaQueueJobs.get(sessionId) === job) qaQueueJobs.delete(sessionId);
+    return { runId: null, status: "empty" };
+  }
+
+  const proc = Bun.spawn([process.execPath, join(import.meta.dir, "qa-worker.ts"), sessionId], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, DB_PATH },
+  });
+  job.proc = proc;
+  const [code, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+  job.proc = null;
+
+  if (job.canceled) return { runId: null, status: "canceled" };
+  if (code !== 0) {
+    const n = await processQaFallback(sessionId, 100);
+    const runId = randomId("run");
+    db.query("INSERT INTO qa_agent_runs (id, session_id, status, finished_at, error, summary) VALUES (?, ?, 'fallback', unixepoch(), ?, ?)")
+      .run(runId, sessionId, `worker failed with exit ${code}: ${stderrText.slice(0, 800)}`, `server fallback promoted/merged ${n} queued submissions`);
+  }
+  qaPayload(sessionId, "public"); qaPayload(sessionId, "presenter"); qaPayload(sessionId, "slides");
+  if (qaQueueJobs.get(sessionId) === job) qaQueueJobs.delete(sessionId);
+  const latest = db.query<{ id: string; status: string }, [string]>("SELECT id, status FROM qa_agent_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT 1").get(sessionId);
+  return { runId: latest?.id ?? null, status: latest?.status ?? (code === 0 ? "done" : "fallback") };
 }
 
 function recordModeratorAction(sessionId: string, questionId: string | null, action: string, Comment: unknown = {}) {
@@ -581,6 +686,17 @@ textarea { resize:vertical; min-height:88px; }
 .pill-active { background:rgba(57,255,136,.08); color:var(--success); }
 .pill-closed { background:rgba(255,56,100,.08); color:var(--danger); }
 .pill-warn { background:rgba(255,204,0,.08); color:var(--warn); }
+.qa-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.qa-switch { position:relative; display:inline-flex; align-items:center; width:236px; min-width:236px; height:42px; padding:3px; border:1px solid var(--line-hot); border-radius:999px; background:#07100d; color:var(--line-hot); box-shadow:0 0 18px rgba(50,255,154,.14); overflow:hidden; cursor:pointer; }
+.qa-switch::before { content:""; position:absolute; top:3px; bottom:3px; width:112px; border-radius:999px; background:var(--line-hot); box-shadow:0 0 18px rgba(50,255,154,.22); transition:left .16s ease; }
+.qa-switch-open::before { left:3px; }
+.qa-switch-paused::before { left:119px; background:rgba(255,204,0,.95); box-shadow:0 0 18px rgba(255,204,0,.18); }
+.qa-switch button { position:relative; z-index:1; flex:1 1 0; height:34px; padding:0; border:0; border-radius:999px; background:transparent; color:var(--muted); box-shadow:none; font-size:.75rem; font-weight:950; letter-spacing:.03em; }
+.qa-switch button:hover { transform:none; background:transparent; }
+.qa-switch button[aria-pressed="true"] { color:#031008; }
+.qa-switch button:disabled { cursor:wait; opacity:.72; }
+.qa-status { display:inline-flex; align-items:center; min-height:37px; min-width:246px; padding:7px 0; font-size:.78rem; font-weight:900; letter-spacing:.02em; }
+.qa-status::before { content:""; width:9px; height:9px; flex:0 0 9px; border-radius:999px; margin-right:8px; background:currentColor; box-shadow:0 0 14px currentColor; }
 .qa-grid { display:grid; grid-template-columns: minmax(0,1fr) minmax(280px,.45fr); gap:16px; align-items:start; }
 .qa-item { border:1px solid var(--line); background:#05090c; border-radius:var(--radius); padding:14px; margin-top:10px; }
 .qa-item strong { color:var(--ink); }
@@ -791,6 +907,24 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
   });
 
   const sessionUrl = sessionPublicUrl(session.id);
+  const questionRows = publicQuestions(session.id, true);
+  const activeQuestions = questionRows.filter((q) => q.status !== "answered" && q.status !== "hidden");
+  const leadThemes = activeQuestions.slice(0, 3);
+  const otherQuestions = activeQuestions.slice(3, 10);
+  const answeredQuestions = questionRows.filter((q) => q.status === "answered").length;
+  const sourceCount = (questionId: string) => db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM qa_question_submissions WHERE question_id = ?").get(questionId)?.c ?? 1;
+
+  const qaIsOpen = session.qa_state === "open";
+  const qaStateLabel = qaIsOpen ? "Accepting audience questions" : "Not accepting new questions";
+  const qaStateClass = qaIsOpen ? "pill-active" : "pill-warn";
+
+  const questionActions = (q: QaQuestionRow) => `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+    ${q.status !== "pinned" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/pin"><button class="btn btn-outline btn-sm">pin</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/unpin"><button class="btn btn-outline btn-sm">unpin</button></form>`}
+    <form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/answer"><button class="btn btn-success btn-sm">answered</button></form>
+    <form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/hide"><button class="btn btn-danger btn-sm">hide</button></form>
+  </div>`;
+
+  const compactQuestion = (q: QaQuestionRow) => `<div class="qa-item"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><strong>${escHtml(q.display_text)}</strong><span class="pill ${q.status === "live" || q.status === "pinned" ? "pill-active" : q.status === "answered" ? "pill-warn" : "pill-closed"}">${q.status}</span></div><div class="qa-meta"><span>score=${q.support_count}</span><span>${new Date(q.created_at * 1000).toLocaleTimeString()}</span></div>${questionActions(q)}</div>`;
 
   const feedbackRows = feedbacks.slice(0, 100).map((f) => {
     const tags = f.tags ? JSON.parse(f.tags) as string[] : [];
@@ -870,13 +1004,29 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
 
   <div class="card" id="questions">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
-      <div><p class="eyebrow" style="margin-bottom:8px">Questions</p><h2>Audience Q&A</h2><p class="muted">Public questions from attendees. Open/pause question intake and moderate what appears on screen.</p></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${["open", "paused", "closed"].map((st) => `<form method="POST" action="/admin/talks/${session.id}/state/${st}"><button class="btn btn-outline btn-sm">${st}</button></form>`).join("")}
-        <a class="btn btn-outline btn-sm" href="/slides/s/${session.id}/qa" target="_blank">Projector view</a>
+      <div><p class="eyebrow" style="margin-bottom:8px">Questions</p><h2>Bubbled-up audience themes</h2><p class="muted">Presenter-ready questions synthesized from raw audience submissions, with votes and repeated themes bubbled up.</p></div>
+      <div class="qa-toolbar">
+        <div class="qa-status ${qaStateClass}" data-qa-status>${qaStateLabel}</div>
+        ${qaSwitch(session.id, qaIsOpen)}
+        <a class="btn btn-outline btn-sm" href="/slides/s/${session.id}/qa" target="_blank">projector view</a>
+        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}/ai-run" target="_blank" rel="noopener">inspect AI runs</a>
       </div>
     </div>
-    ${publicQuestions(session.id, true).length ? publicQuestions(session.id, true).map((q) => `<div class="qa-item"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><strong>${escHtml(q.display_text)}</strong><span class="pill ${q.status === "live" || q.status === "pinned" ? "pill-active" : q.status === "answered" ? "pill-warn" : "pill-closed"}">${q.status}</span></div><div class="qa-meta"><span>score=${q.support_count}</span><span>${new Date(q.created_at * 1000).toLocaleTimeString()}</span></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${q.status !== "pinned" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/pin"><button class="btn btn-outline btn-sm">pin</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/unpin"><button class="btn btn-outline btn-sm">unpin</button></form>`}<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/answer"><button class="btn btn-success btn-sm">answered</button></form><form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/hide"><button class="btn btn-danger btn-sm">hide</button></form></div></div>`).join("") : `<p class="muted mt-16">No questions yet.</p>`}
+
+    <div class="mt-16" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+      ${leadThemes.length ? leadThemes.map((q, idx) => `<div class="qa-item" style="border-color:${idx === 0 ? "var(--line-hot)" : "var(--line)"};box-shadow:${idx === 0 ? "0 0 24px rgba(50,255,154,.10)" : "none"};margin-top:0">
+        <div class="muted" style="font-size:.78rem;font-weight:900;margin-bottom:8px">THEME ${idx + 1}</div>
+        <strong style="font-size:1.05rem;color:var(--ink)">${escHtml(q.display_text)}</strong>
+        <div class="qa-meta"><span>${sourceCount(q.id)} source${sourceCount(q.id) === 1 ? "" : "s"}</span><span>score=${q.support_count}</span><span>${escHtml(q.status)}</span></div>
+        ${questionActions(q)}
+      </div>`).join("") : `<div class="qa-item mt-16"><strong>No audience themes yet.</strong><p class="muted mt-8">When attendees ask, submissions will be cleaned up, merged, and shown here as presenter-ready questions.</p></div>`}
+    </div>
+
+    <div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px">
+      <h2 style="font-size:1.05rem">More presenter-ready questions</h2>
+      ${otherQuestions.length ? otherQuestions.map(compactQuestion).join("") : `<p class="muted mt-8">No other live questions.</p>`}
+      ${answeredQuestions ? `<p class="muted mt-16">${answeredQuestions} answered question${answeredQuestions === 1 ? "" : "s"} hidden from this priority view.</p>` : ""}
+    </div>
   </div>
 
   ${total > 0 ? `
@@ -897,7 +1047,8 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
   </div>` : `<div class="card text-center" id="feedback"><p class="eyebrow" style="margin-bottom:8px">Feedback</p><h2>Live signals and comments</h2><p class="muted mt-8">No feedback yet. Share the attendee page and invite people to send signals any time.</p></div>`}
 
   <div id="access">${accessPanel(session.id, auth, freshToken)}</div>
-</div>`;
+</div>
+${qaToggleScript()}`;
 
   return layout(`Admin: ${session.title}`, body, true, auth);
 }
@@ -911,7 +1062,6 @@ function qaAdminPage(sessionId: string, auth: AuthContext) {
   const rows = db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE session_id = ? ORDER BY pinned DESC, status='pinned' DESC, status='live' DESC, priority DESC, support_count DESC, created_at ASC").all(sessionId);
   const pending = db.query<{ id: string; raw_text: string; status: string; submitted_at: number }, [string]>("SELECT id, raw_text, status, submitted_at FROM qa_question_submissions WHERE session_id = ? AND status IN ('pending','held','rejected') ORDER BY submitted_at DESC LIMIT 50").all(sessionId);
   const runs = db.query<{ id: string; status: string; started_at: number; finished_at: number | null; summary: string | null; error: string | null }, [string]>("SELECT id, status, started_at, finished_at, summary, error FROM qa_agent_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT 8").all(sessionId);
-  const statePill = session.qa_state === "open" ? "pill-active" : session.qa_state === "paused" ? "pill-warn" : "pill-closed";
   const questionCard = (q: QaQuestionRow) => `<div class="qa-item">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><strong>${escHtml(q.display_text)}</strong><span class="pill ${q.status === "live" || q.status === "pinned" ? "pill-active" : q.status === "held" ? "pill-warn" : "pill-closed"}">${q.status}</span></div>
     <div class="qa-meta"><span>support=${q.support_count}</span><span>priority=${q.priority}</span><span>created=${new Date(q.created_at * 1000).toLocaleTimeString()}</span></div>
@@ -921,16 +1071,19 @@ function qaAdminPage(sessionId: string, auth: AuthContext) {
       ${q.status === "hidden" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/restore"><button class="btn btn-outline btn-sm">restore</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/hide"><button class="btn btn-danger btn-sm">hide</button></form>`}
     </div>
   </div>`;
+  const qaIsOpen = session.qa_state === "open";
+  const qaStateLabel = qaIsOpen ? "Accepting audience questions" : "Not accepting new questions";
+  const qaStateClass = qaIsOpen ? "pill-active" : "pill-warn";
   const body = `<div class="admin-shell">
     <div class="card admin-hero">
       <div>
         <p class="eyebrow">Q&A control room</p>
         <h1 style="color:var(--ink);text-transform:uppercase">${escHtml(session.title)}</h1>
         <p class="muted">Review questions, mark answered, and control whether new questions are accepted.</p>
-        <span class="pill ${statePill}" style="margin-top:10px">qa=${session.qa_state}</span>
+        <div class="qa-status ${qaStateClass}" data-qa-status style="margin-top:10px">${qaStateLabel}</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${["open", "paused", "closed"].map((st) => `<form method="POST" action="/admin/talks/${session.id}/state/${st}"><button class="btn btn-outline btn-sm">${st}</button></form>`).join("")}
+      <div class="qa-toolbar">
+        ${qaSwitch(session.id, qaIsOpen)}
         <form method="POST" action="/admin/talks/${session.id}/run"><button class="btn btn-primary btn-sm">process questions</button></form>
         <a class="btn btn-outline btn-sm" href="/slides/t/${session.id}/qa" target="_blank">slides</a>
         <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}">feedback</a>
@@ -947,8 +1100,131 @@ function qaAdminPage(sessionId: string, auth: AuthContext) {
       <aside class="card"><h2>Recent submitted questions</h2>${pending.length ? pending.map((p) => `<div class="qa-item"><strong>${escHtml(p.raw_text)}</strong><div class="qa-meta"><span>${p.status}</span><span>${new Date(p.submitted_at * 1000).toLocaleTimeString()}</span></div></div>`).join("") : `<p class="muted">No pending submitted questions.</p>`}
       <h2 class="mt-24">Processing history</h2>${runs.length ? runs.map((r) => `<div class="qa-item"><strong>${escHtml(r.status)}</strong><div class="qa-meta"><span>${new Date(r.started_at * 1000).toLocaleTimeString()}</span>${r.finished_at ? `<span>done=${new Date(r.finished_at * 1000).toLocaleTimeString()}</span>` : ""}</div>${r.summary ? `<p class="muted mt-8">${escHtml(r.summary)}</p>` : ""}${r.error ? `<p style="color:var(--danger)" class="mt-8">${escHtml(r.error)}</p>` : ""}</div>`).join("") : `<p class="muted">No processing runs recorded.</p>`}</aside>
     </div>
-  </div>`;
+  </div>
+  ${qaToggleScript()}`;
   return layout(`Q&A: ${session.title}`, body, true, auth);
+}
+
+function qaSwitch(sessionId: string, isOpen: boolean) {
+  return `<div class="qa-switch ${isOpen ? "qa-switch-open" : "qa-switch-paused"}" data-qa-switch data-session-id="${sessionId}">
+    <button type="button" data-qa-state="open" aria-pressed="${isOpen ? "true" : "false"}">Accept</button>
+    <button type="button" data-qa-state="paused" aria-pressed="${isOpen ? "false" : "true"}">Pause</button>
+  </div>`;
+}
+
+function qaToggleScript() {
+  return `<script>
+document.addEventListener('click', async (event) => {
+  const sw = event.target.closest && event.target.closest('[data-qa-switch]');
+  if (sw) {
+    event.preventDefault();
+    const button = event.target.closest('[data-qa-state]');
+    const rect = sw.getBoundingClientRect();
+    const clickedLeft = event.clientX < rect.left + rect.width / 2;
+    const nextState = button ? button.dataset.qaState : (clickedLeft ? 'open' : 'paused');
+    const sessionId = sw.dataset.sessionId;
+    if ((nextState === 'open') === sw.classList.contains('qa-switch-open')) return;
+    sw.querySelectorAll('button').forEach((b) => b.disabled = true);
+    try {
+      const res = await fetch('/admin/talks/' + sessionId + '/state/' + nextState, { method: 'POST', headers: { 'Accept': 'application/json' } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.message || 'Could not update questions state.');
+      const isOpen = data.qa_state === 'open';
+      document.querySelectorAll('[data-qa-switch]').forEach((el) => {
+        el.classList.toggle('qa-switch-open', isOpen);
+        el.classList.toggle('qa-switch-paused', !isOpen);
+        el.querySelector('[data-qa-state="open"]').setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+        el.querySelector('[data-qa-state="paused"]').setAttribute('aria-pressed', isOpen ? 'false' : 'true');
+      });
+      document.querySelectorAll('[data-qa-status]').forEach((el) => {
+        el.textContent = isOpen ? 'Accepting audience questions' : 'Not accepting new questions';
+        el.classList.toggle('pill-active', isOpen);
+        el.classList.toggle('pill-warn', !isOpen);
+      });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not update questions state.');
+    } finally {
+      sw.querySelectorAll('button').forEach((b) => b.disabled = false);
+    }
+    return;
+  }
+});
+
+document.addEventListener('submit', async (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement)) return;
+  const action = form.getAttribute('action') || '';
+  const questionActionPattern = new RegExp('^/admin/talks/[^/]+/questions/[^/]+/(pin|unpin|answer|hide|restore)$');
+  if (!questionActionPattern.test(action)) return;
+  event.preventDefault();
+  const button = form.querySelector('button');
+  const card = form.closest('.qa-item');
+  const oldText = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = 'saving…'; }
+  try {
+    const res = await fetch(action, { method: 'POST', headers: { 'Accept': 'application/json' } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.message || 'Could not update question.');
+    if (card) {
+      if (data.action === 'answer' || data.action === 'hide') {
+        card.style.transition = 'opacity .16s ease, transform .16s ease';
+        card.style.opacity = '.35';
+        card.style.transform = 'scale(.995)';
+        setTimeout(() => card.remove(), 170);
+      } else {
+        const pill = card.querySelector('.pill');
+        if (pill && data.question && data.question.status) pill.textContent = data.question.status;
+      }
+    }
+  } catch (err) {
+    if (button) { button.disabled = false; button.textContent = oldText; }
+    alert(err instanceof Error ? err.message : 'Could not update question.');
+  }
+});
+</script>`;
+}
+
+function safeReadSmall(path: string | null, maxBytes = 240_000) {
+  if (!path) return { label: "not recorded", content: "" };
+  if (!existsSync(path)) return { label: `${path} (missing)`, content: "" };
+  const data = readFileSync(path, "utf8");
+  const truncated = data.length > maxBytes;
+  return { label: path + (truncated ? ` (truncated to ${maxBytes} chars)` : ""), content: truncated ? data.slice(0, maxBytes) : data };
+}
+
+function aiRunPage(sessionId: string, auth: AuthContext) {
+  const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
+  if (!session) return null;
+  const run = db.query<{ id: string; status: string; started_at: number; finished_at: number | null; input_path: string | null; output_path: string | null; error: string | null; summary: string | null }, [string]>(
+    "SELECT id, status, started_at, finished_at, input_path, output_path, error, summary FROM qa_agent_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT 1"
+  ).get(sessionId);
+  if (!run) {
+    return layout(`AI run: ${session.title}`, `<div class="admin-shell"><div class="card"><p class="eyebrow">AI run audit</p><h1 style="color:var(--ink)">${escHtml(session.title)}</h1><p class="muted mt-16">No AI/Codex runs have been recorded for this talk yet.</p><a class="btn btn-outline mt-24" href="/admin/talks/${session.id}#questions">back to questions</a></div></div>`, true, auth);
+  }
+  const input = safeReadSmall(run.input_path);
+  const output = safeReadSmall(run.output_path);
+  const body = `<div class="admin-shell">
+    <div class="card">
+      <p class="eyebrow">AI run audit</p>
+      <h1 style="color:var(--ink);margin-bottom:8px">${escHtml(session.title)}</h1>
+      <p class="muted">Raw input and output from the latest recorded question-processing run.</p>
+      <div class="qa-meta mt-16"><span>run=${escHtml(run.id)}</span><span>status=${escHtml(run.status)}</span><span>started=${new Date(run.started_at * 1000).toLocaleString()}</span>${run.finished_at ? `<span>finished=${new Date(run.finished_at * 1000).toLocaleString()}</span>` : ""}</div>
+      ${run.summary ? `<p class="mt-16"><strong>Summary:</strong> ${escHtml(run.summary)}</p>` : ""}
+      ${run.error ? `<p class="mt-16" style="color:var(--danger)"><strong>Error:</strong> ${escHtml(run.error)}</p>` : ""}
+      ${!run.input_path && !run.output_path ? `<p class="muted mt-16">This run did not record raw files. It was probably the built-in deterministic fallback, not the external Codex worker.</p>` : ""}
+      <a class="btn btn-outline mt-24" href="/admin/talks/${session.id}#questions">back to questions</a>
+    </div>
+    <div class="card mt-16">
+      <h2>Raw input</h2>
+      <p class="muted mt-8">${escHtml(input.label)}</p>
+      ${input.content ? `<pre style="white-space:pre-wrap;overflow:auto;max-height:520px;background:#030608;border:1px solid var(--line);padding:14px;border-radius:var(--radius);margin-top:12px">${escHtml(input.content)}</pre>` : `<p class="muted mt-16">No raw input content available.</p>`}
+    </div>
+    <div class="card mt-16">
+      <h2>${output.content ? "Raw Codex output" : "Codex output"}</h2>
+      ${output.content ? `<p class="muted mt-8">${escHtml(output.label)}</p><pre style="white-space:pre-wrap;overflow:auto;max-height:520px;background:#030608;border:1px solid var(--line);padding:14px;border-radius:var(--radius);margin-top:12px">${escHtml(output.content)}</pre>` : `<p class="muted mt-8">No Codex output was written for this run. The app used fallback processing instead, so the presenter still sees a question/theme.</p>`}
+    </div>
+  </div>`;
+  return layout(`AI run: ${session.title}`, body, true, auth);
 }
 
 function qrPage(sessionId: string, auth: AuthContext, freshToken: string | null = null) {
@@ -1008,7 +1284,7 @@ function attendeePage(sessionId: string) {
     );
   }
 
-  processQaFallback(sessionId, 20);
+  scheduleQaProcessing(sessionId);
   const qaOpen = session.qa_enabled && session.qa_state === "open";
   const qaQuestions = publicQuestions(sessionId, true).slice(0, 12);
   const qaPanel = session.qa_enabled ? `<section class="card" id="qaPanel">
@@ -1024,7 +1300,7 @@ function attendeePage(sessionId: string) {
       <h2 style="font-size:1.05rem">Questions from the room</h2>
       <p class="muted mt-8">Vote on questions you want the presenter to answer.</p>
       <div id="qaPublic" class="mt-16">
-        ${qaQuestions.length ? qaQuestions.map((q) => `<div class="qa-item" data-qid="${q.id}"><strong>${escHtml(q.display_text)}</strong><div class="qa-meta"><button type="button" class="btn btn-outline qa-vote" data-vote="${q.id}" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="${q.id}" data-dir="down">👎 down</button><span>score=${q.support_count}</span></div></div>`).join("") : `<p class="muted">No questions yet.</p>`}
+        ${(() => { const initial = attendeeQaPayload(session.id)?.questions ?? []; return initial.length ? initial.map((q: any) => `<div class="qa-item" data-qid="${escHtml(q.id)}"><strong>${escHtml(q.text)}</strong><div class="qa-meta">${q.answered ? `<span>answered</span>` : `<button type="button" class="btn btn-outline qa-vote" data-vote="${escHtml(q.id)}" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="${escHtml(q.id)}" data-dir="down">👎 down</button><span>${escHtml(q.status)}</span>`}<span>score=${q.support_count}</span></div></div>`).join("") : `<p class="muted">No questions yet.</p>`; })()}
       </div>
     </div>
   </section>` : "";
@@ -1084,9 +1360,19 @@ async function refreshQa() {
   const res = await fetch('/api/sessions/${session.id}/qa/public.json');
   if (!res.ok) return;
   const data = await res.json();
-  qaPublic.innerHTML = data.questions.length ? data.questions.map((q) => '<div class="qa-item"><strong>' + escapeHtml(q.text) + '</strong><div class="qa-meta"><button type="button" class="btn btn-outline qa-vote" data-vote="' + q.id + '" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="' + q.id + '" data-dir="down">👎 down</button><span>score=' + q.support_count + '</span></div></div>').join('') : '<p class="muted">No questions yet.</p>';
+  qaPublic.innerHTML = data.questions.length ? data.questions.map(renderPublicQuestion).join('') : '<p class="muted">No questions yet.</p>';
 }
 function escapeHtml(s) { return String(s).replace(/[&<>\"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
+function renderPublicQuestion(q) {
+  const controls = q.answered ? '<span>answered</span>' : '<button type="button" class="btn btn-outline qa-vote" data-vote="' + escapeHtml(q.id) + '" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="' + escapeHtml(q.id) + '" data-dir="down">👎 down</button><span>' + escapeHtml(q.status) + '</span>';
+  return '<div class="qa-item" data-qid="' + escapeHtml(q.id) + '"><strong>' + escapeHtml(q.text) + '</strong><div class="qa-meta">' + controls + '<span>score=' + q.support_count + '</span></div></div>';
+}
+if (window.EventSource && qaPublic) {
+  const qaEvents = new EventSource('/api/sessions/${session.id}/qa/events');
+  qaEvents.addEventListener('qa', (event) => {
+    try { const data = JSON.parse(event.data); qaPublic.innerHTML = data.questions.length ? data.questions.map(renderPublicQuestion).join('') : '<p class="muted">No questions yet.</p>'; } catch {}
+  });
+}
 qaForm && qaForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const question = document.getElementById('qaQuestion').value.trim();
@@ -1094,8 +1380,12 @@ qaForm && qaForm.addEventListener('submit', async (e) => {
   qaStatus.textContent = 'Submitting question…';
   const res = await fetch('/api/sessions/${session.id}/qa/questions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question }) });
   const data = await res.json().catch(() => ({}));
-  qaStatus.textContent = res.ok ? 'Question submitted.' : ('Error: ' + (data.message || data.error || 'Question could not be saved.')); console[res.ok ? 'info' : 'warn']('qa submit response', res.status, data);
-  if (res.ok) { document.getElementById('qaQuestion').value = ''; setTimeout(refreshQa, 250); }
+  qaStatus.textContent = res.ok ? 'Question queued for grouping.' : ('Error: ' + (data.message || data.error || 'Question could not be saved.')); console[res.ok ? 'info' : 'warn']('qa submit response', res.status, data);
+  if (res.ok) {
+    document.getElementById('qaQuestion').value = '';
+    setTimeout(refreshQa, 1200);
+    setTimeout(refreshQa, 3000);
+  }
 });
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest && e.target.closest('[data-vote]');
@@ -1256,7 +1546,7 @@ Bun.serve({
       if (!title) return redirect("/admin/dashboard");
       const id = randomId("s");
       if (auth?.scope !== "global_admin") return html(lockedConsole("admin"), 401);
-      db.query("INSERT INTO sessions (id, title, presenter, description, qa_state, qa_mode, qa_display_mode, qa_enabled, short_code, feedback_state) VALUES (?, ?, ?, ?, 'open', 'moderated', 'queue', 1, ?, 'open')").run(id, title, presenter, description, id);
+      db.query("INSERT INTO sessions (id, title, presenter, description, qa_state, qa_mode, qa_display_mode, qa_enabled, short_code, feedback_state, ai_context) VALUES (?, ?, ?, ?, 'open', 'moderated', 'queue', 1, ?, 'open', ?)").run(id, title, presenter, description, id, [title, presenter, description].filter(Boolean).join("\n\n"));
       const capToken = await createRoomCapability(id);
       const page = qrPage(id, auth, capToken);
       return page ? html(page) : redirect(`/admin/talks/${id}/qr`);
@@ -1271,7 +1561,7 @@ Bun.serve({
       const presenter = String(body.presenter ?? "").trim().slice(0, 120);
       const description = String(body.description ?? "").trim().slice(0, 240);
       const qaState = ["disabled", "open", "paused", "closed"].includes(String(body.qa_state)) ? String(body.qa_state) : "open";
-      db.query("INSERT INTO sessions (id, title, presenter, description, qa_state, qa_mode, qa_display_mode, qa_enabled, short_code, feedback_state) VALUES (?, ?, ?, ?, ?, 'moderated', 'queue', 1, ?, 'open')").run(id, title, presenter, description, qaState, id);
+      db.query("INSERT INTO sessions (id, title, presenter, description, qa_state, qa_mode, qa_display_mode, qa_enabled, short_code, feedback_state, ai_context) VALUES (?, ?, ?, ?, ?, 'moderated', 'queue', 1, ?, 'open', ?)").run(id, title, presenter, description, qaState, id, [title, presenter, description].filter(Boolean).join("\n\n"));
       const capToken = await createRoomCapability(id);
       const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(id)!;
       return json({ ...sessionPacket(session), operator_link: operatorLink(capToken), presenter_message: presenterPacket(id, capToken) }, 201);
@@ -1294,7 +1584,10 @@ Bun.serve({
       if (!canManageRoom(auth, sid)) return html(lockedConsole("room"), 401);
       db.query("UPDATE sessions SET qa_state = ? WHERE id = ?").run(state, sid);
       recordModeratorAction(sid, null, `state:${state}`);
-      return redirect(`/admin/talks/${sid}`);
+      if ((req.headers.get("accept") || "").includes("application/json")) {
+        return json({ ok: true, session_id: sid, qa_state: state });
+      }
+      return redirect(`/admin/talks/${sid}#questions`);
     }
 
     const qaRunMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/run$/);
@@ -1321,7 +1614,18 @@ Bun.serve({
       if (action === "restore") db.query("UPDATE qa_questions SET status='live', hidden_at=NULL, answered_at=NULL, human_override=1, updated_at=unixepoch() WHERE id=?").run(qid);
       recordModeratorAction(sid, qid, action);
       qaPayload(sid, "public"); qaPayload(sid, "presenter"); qaPayload(sid, "slides");
-      return redirect(`/admin/talks/${sid}`);
+      emitQaUpdate(sid);
+      const updated = db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE id=?").get(qid);
+      if ((req.headers.get("accept") || "").includes("application/json")) return json({ ok: true, action, question: updated });
+      return redirect(`/admin/talks/${sid}#questions`);
+    }
+
+    const aiRunMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/ai-run$/);
+    if (aiRunMatch && method === "GET") {
+      const sid = aiRunMatch[1];
+      if (!canManageRoom(auth, sid)) return html(lockedConsole("room"), 401);
+      const page = aiRunPage(sid, auth);
+      return page ? html(page) : html("<h1>Session not found</h1>", 404);
     }
 
     const qrMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/qr$/);
@@ -1400,6 +1704,26 @@ Bun.serve({
       return json({ ok: true }, 202, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
     }
 
+    const qaEventsMatch = path.match(/^\/api\/sessions\/([a-z0-9]+)\/qa\/events$/);
+    if (qaEventsMatch && method === "GET") {
+      const sid = qaEventsMatch[1];
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const client = { sessionId: sid, controller };
+          sseClients.add(client);
+          const payload = attendeeQaPayload(sid);
+          if (payload) controller.enqueue(sseEncoder.encode(`event: qa\ndata: ${JSON.stringify(payload)}\n\n`));
+          const keepAlive = setInterval(() => {
+            try { controller.enqueue(sseEncoder.encode(`: keepalive\n\n`)); } catch { clearInterval(keepAlive); sseClients.delete(client); }
+          }, 15000);
+        },
+        cancel() {
+          for (const client of [...sseClients]) if (client.sessionId === sid) sseClients.delete(client);
+        },
+      });
+      return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" } });
+    }
+
     const qaApiPublicMatch = path.match(/^\/api\/sessions\/([a-z0-9]+)\/qa\/(public|presenter|slides)\.json$/);
     if (qaApiPublicMatch && method === "GET") {
       const view = qaApiPublicMatch[2] as "public" | "presenter" | "slides";
@@ -1445,10 +1769,10 @@ Bun.serve({
         const qsid = randomId("sub");
         db.query("INSERT INTO qa_question_submissions (id, session_id, submitter_key, raw_text, normalized_hash) VALUES (?, ?, ?, ?, ?)").run(qsid, sid, key, text, hash);
         recordInteraction(sid, key, "question", null, text, qsid);
-        const qid = await promoteSubmissionFallback(sid, qsid, text);
-        qaPayload(sid, "public"); qaPayload(sid, "presenter"); qaPayload(sid, "slides");
-        console.info(JSON.stringify({ event: "qa_question_received", session_id: sid, submission_id: qsid, question_id: qid, length: text.length }));
-        return json({ ok: true, status: "received", submission_id: qsid, question_id: qid }, 202, cookieHeaders);
+        scheduleQaProcessing(sid);
+        emitQaUpdate(sid);
+        console.info(JSON.stringify({ event: "qa_question_queued", session_id: sid, submission_id: qsid, length: text.length }));
+        return json({ ok: true, status: "queued", submission_id: qsid }, 202, cookieHeaders);
       } catch (err) {
         console.error(JSON.stringify({ event: "qa_question_error", session_id: sid, error: String(err), stack: err instanceof Error ? err.stack : undefined }));
         return json({ error: "server_error", message: "Question could not be saved. Please try again." }, 500, cookieHeaders);
@@ -1459,16 +1783,20 @@ Bun.serve({
     if (qaApiVoteMatch && method === "POST") {
       const [, sid, qid] = qaApiVoteMatch;
       const { key, isNew } = getSubmitterKey(req);
-      const q = db.query<QaQuestionRow, [string, string]>("SELECT * FROM qa_questions WHERE id=? AND session_id=?").get(qid, sid);
-      if (!q || ["hidden", "rejected", "merged"].includes(q.status)) return json({ error: "not_found" }, 404, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
+      const raw = db.query<{ id: string; question_id: string | null }, [string, string]>("SELECT id, question_id FROM qa_question_submissions WHERE id=? AND session_id=?").get(qid, sid);
+      const theme = raw ? null : db.query<QaQuestionRow, [string, string]>("SELECT * FROM qa_questions WHERE id=? AND session_id=?").get(qid, sid);
+      if (!raw && (!theme || ["hidden", "rejected", "merged"].includes(theme.status))) return json({ error: "not_found" }, 404, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
       const body = await req.json().catch(() => ({})) as Record<string, unknown>;
       const voteValue = Number(body.value) < 0 ? -1 : 1;
-      db.query("INSERT INTO qa_question_votes (id, session_id, question_id, submitter_key, value) VALUES (?, ?, ?, ?, ?) ON CONFLICT(question_id, submitter_key) DO UPDATE SET value = excluded.value, created_at = unixepoch()").run(randomId("v"), sid, qid, key, voteValue);
+      const targetKind = raw ? "raw" : "theme";
+      db.query("INSERT INTO qa_question_votes (id, session_id, question_id, submitter_key, value, target_kind) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(question_id, submitter_key) DO UPDATE SET value = excluded.value, target_kind = excluded.target_kind, created_at = unixepoch()").run(randomId("v"), sid, qid, key, voteValue, targetKind);
       recordInteraction(sid, key, "question_vote", voteValue, null, qid);
-      recomputeSupport(qid);
-      const updated = db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE id=?").get(qid)!;
+      if (raw?.question_id) recomputeSupport(raw.question_id);
+      if (theme) recomputeSupport(qid);
       qaPayload(sid, "public"); qaPayload(sid, "presenter"); qaPayload(sid, "slides");
-      return json({ ok: true, question_id: qid, support_count: updated.support_count }, 200, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
+      emitQaUpdate(sid);
+      const support = raw ? rawQuestionSupport(qid) : db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE id=?").get(qid)?.support_count ?? 0;
+      return json({ ok: true, question_id: qid, support_count: support }, 200, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
     }
 
     const slidesMatch = path.match(/^\/(?:embed|slides)\/(?:s|t)\/([a-z0-9]+)\/qa$/);

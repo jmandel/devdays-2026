@@ -8,7 +8,8 @@
     "typecheck": "bunx tsc --noEmit --skipLibCheck",
     "cli": "bun run src/cli.ts",
     "qa-worker": "bun run src/qa-worker.ts",
-    "load-talks": "bun run scripts/load-talks.ts"
+    "load-talks": "bun run scripts/load-talks.ts",
+    "load-ai-context": "bun run scripts/load-ai-context.ts"
   },
   "devDependencies": {
     "bun-types": "^1.3.14",

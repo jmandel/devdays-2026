@@ -69,11 +69,11 @@ This clears existing runtime data and creates one session per listed DevDays tal
 
 | ID | Slides path |
 |---|---|
-| `ssmart` | `decks/smart-ecosystem/deck.html` |
-| `skclipboard` | `decks/kill-the-clipboard-panel/deck.html` |
-| `sdigcred` | `decks/digital-credentials-sd-jwt/deck.html` |
-| `sllmagents` | `decks/llm-agents-health-data/deck.html` |
-| `scoin` | `decks/conversational-interop/deck.html` |
+| `smart` | `decks/smart-ecosystem/deck.html` |
+| `ktc` | `decks/kill-the-clipboard-panel/deck.html` |
+| `checkin` | `decks/digital-credentials-sd-jwt/deck.html` |
+| `llms` | `decks/llm-agents-health-data/deck.html` |
+| `coin` | `decks/conversational-interop/deck.html` |
 
 ## Routes
 

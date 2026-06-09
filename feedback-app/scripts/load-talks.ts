@@ -8,20 +8,20 @@ const SLIDES_BASE_URL = (process.env.SLIDES_BASE_URL ?? "https://jmandel.github.
 const db = new Database(DB_PATH);
 
 const slidePaths: Record<string, string> = {
-  ssmart: "decks/smart-ecosystem/deck.html",
-  skclipboard: "decks/kill-the-clipboard-panel/deck.html",
-  sdigcred: "decks/digital-credentials-sd-jwt/deck.html",
-  sllmagents: "decks/llm-agents-health-data/deck.html",
-  scoin: "decks/conversational-interop/deck.html",
+  smart: "decks/smart-ecosystem/deck.html",
+  ktc: "decks/kill-the-clipboard-panel/deck.html",
+  checkin: "decks/digital-credentials-sd-jwt/deck.html",
+  llms: "decks/llm-agents-health-data/deck.html",
+  coin: "decks/conversational-interop/deck.html",
 };
 
 function slugId(title: string) {
   const lower = title.toLowerCase();
-  if (lower.includes("smart across")) return "ssmart";
-  if (lower.includes("kill the clipboard")) return "skclipboard";
-  if (lower.includes("digital credentials")) return "sdigcred";
-  if (lower.includes("llm agents")) return "sllmagents";
-  if (lower.includes("conversational interop")) return "scoin";
+  if (lower.includes("smart across")) return "smart";
+  if (lower.includes("kill the clipboard")) return "ktc";
+  if (lower.includes("digital credentials")) return "checkin";
+  if (lower.includes("llm agents")) return "llms";
+  if (lower.includes("conversational interop")) return "coin";
   return "s" + lower.replace(/[^a-z0-9]+/g, "").slice(0, 14);
 }
 

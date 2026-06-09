@@ -17,11 +17,11 @@ The feedback app is populated from `prep/talks.md` with stable session IDs:
 
 | ID | Talk |
 |---|---|
-| `ssmart` | SMART Across the Ecosystem: App Launch, Permission Tickets, and More |
-| `skclipboard` | Kill the Clipboard: Frictionless Intake with Patient-Shared Data |
-| `sdigcred` | Beyond "All-or-Nothing" QR Codes: Digital Credentials API, SMART Health Check-in, and Selective Disclosure JWTs |
-| `sllmagents` | Let's Build: Making LLM Agents Work with Health Data (FHIR & EHI) |
-| `scoin` | Toward Conversational Interop: Agents Structuring the Long Tail on the Fly |
+| `smart` | SMART Across the Ecosystem: App Launch, Permission Tickets, and More |
+| `ktc` | Kill the Clipboard: Frictionless Intake with Patient-Shared Data |
+| `checkin` | Beyond "All-or-Nothing" QR Codes: Digital Credentials API, SMART Health Check-in, and Selective Disclosure JWTs |
+| `llms` | Let's Build: Making LLM Agents Work with Health Data (FHIR & EHI) |
+| `coin` | Toward Conversational Interop: Agents Structuring the Long Tail on the Fly |
 
 ## Published site
 

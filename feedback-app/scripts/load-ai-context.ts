@@ -14,11 +14,11 @@ function addColumnIfMissing(table: string, column: string, ddl: string) {
 addColumnIfMissing("sessions", "ai_context", "ai_context TEXT NOT NULL DEFAULT ''");
 
 const deckDirs: Record<string, string> = {
-  ssmart: "decks/smart-ecosystem",
-  skclipboard: "decks/kill-the-clipboard-panel",
-  sdigcred: "decks/digital-credentials-sd-jwt",
-  sllmagents: "decks/llm-agents-health-data",
-  scoin: "decks/conversational-interop",
+  smart: "decks/smart-ecosystem",
+  ktc: "decks/kill-the-clipboard-panel",
+  checkin: "decks/digital-credentials-sd-jwt",
+  llms: "decks/llm-agents-health-data",
+  coin: "decks/conversational-interop",
 };
 const extraFiles = ["deck.md", "visual-brief.md", "tutorial.md", "demo-runbook.md", "interview-prep.md", "smart-ecosystem-deck-spec.md", "slide-design-spec.md"];
 

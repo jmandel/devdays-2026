@@ -448,10 +448,11 @@ const sseEncoder = new TextEncoder();
 function emitQaUpdate(sessionId: string) {
   const publicPayload = attendeeQaPayload(sessionId);
   const presenterPayload = presenterQaPayload(sessionId);
-  if (!publicPayload && !presenterPayload) return;
+  const feedbackPayload = feedbackSummaryPayload(sessionId);
+  if (!publicPayload && !presenterPayload && !feedbackPayload) return;
   for (const client of [...sseClients]) {
     if (client.sessionId !== sessionId) continue;
-    const payload = client.includePresenter ? { public: publicPayload, presenter: presenterPayload } : { public: publicPayload };
+    const payload = client.includePresenter ? { public: publicPayload, presenter: presenterPayload, feedback: feedbackPayload } : { public: publicPayload };
     const frame = `event: qa\ndata: ${JSON.stringify(payload)}\n\n`;
     try { client.controller.enqueue(sseEncoder.encode(frame)); } catch { sseClients.delete(client); }
   }
@@ -486,8 +487,23 @@ function presenterQaPayload(sessionId: string) {
   };
 }
 
+function feedbackSummaryPayload(sessionId: string) {
+  const since = Math.floor(Date.now() / 1000) - 5 * 60;
+  const pulseRows = db.query<{ value: string; c: number }, [string, number]>("SELECT value, COUNT(*) AS c FROM attendee_interactions WHERE session_id = ? AND kind = 'pulse' AND created_at >= ? GROUP BY value").all(sessionId, since);
+  const ratingRows = db.query<{ rating: number; c: number }, [string]>("SELECT rating, COUNT(*) AS c FROM feedback WHERE session_id = ? AND rating IS NOT NULL GROUP BY rating").all(sessionId);
+  const comments = db.query<{ id: string; rating: number | null; comment: string | null; tags: string | null; submitted_at: number }, [string]>("SELECT id, rating, comment, tags, submitted_at FROM feedback WHERE session_id = ? AND (comment IS NOT NULL OR tags IS NOT NULL OR rating IS NOT NULL) ORDER BY submitted_at DESC LIMIT 50").all(sessionId);
+  return {
+    pulse: { window_seconds: 300, counts: Object.fromEntries(pulseRows.map((r) => [r.value, r.c])), total: pulseRows.reduce((sum, r) => sum + r.c, 0) },
+    session_feedback: {
+      total: db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM feedback WHERE session_id = ?").get(sessionId)?.c ?? 0,
+      rating_distribution: Object.fromEntries(ratingRows.map((r) => [String(r.rating), r.c])),
+      comments: comments.map((c) => ({ ...c, tags: c.tags ? JSON.parse(c.tags) : [] })),
+    },
+  };
+}
+
 function combinedQaPayload(sessionId: string) {
-  return { public: attendeeQaPayload(sessionId), presenter: presenterQaPayload(sessionId) };
+  return { public: attendeeQaPayload(sessionId), presenter: presenterQaPayload(sessionId), feedback: feedbackSummaryPayload(sessionId) };
 }
 
 function attendeeQaPayload(sessionId: string) {
@@ -1856,6 +1872,7 @@ Bun.serve({
       const textBody = body.body == null ? null : String(body.body).slice(0, 2000);
       const targetId = body.target_id == null ? null : String(body.target_id).slice(0, 120);
       recordInteraction(sid, key, kind, value, textBody, targetId, body.metadata ?? {});
+      if (kind === "pulse" || kind === "signal") emitQaUpdate(sid);
       return json({ ok: true }, 202, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
     }
 
@@ -1875,6 +1892,7 @@ Bun.serve({
       const fid = randomId("f");
       db.query("INSERT INTO feedback (id, session_id, rating, sentiment, comment, tags) VALUES (?, ?, ?, ?, ?, ?)").run(fid, sid, rating, sentiment, comment, tags);
       recordInteraction(sid, key, "feedback", sentiment ?? rating, comment, fid, { rating, sentiment, tags: rawTags });
+      emitQaUpdate(sid);
       return json({ ok: true, feedback_id: fid }, 202, cookieHeaders);
     }
 
@@ -1882,18 +1900,7 @@ Bun.serve({
     if (feedbackSummaryMatch && method === "GET") {
       const sid = feedbackSummaryMatch[1];
       if (!canManageRoom(auth, sid)) return json({ error: "unauthorized" }, 401);
-      const since = Math.floor(Date.now() / 1000) - 5 * 60;
-      const pulseRows = db.query<{ value: string; c: number }, [string, number]>("SELECT value, COUNT(*) AS c FROM attendee_interactions WHERE session_id = ? AND kind = 'pulse' AND created_at >= ? GROUP BY value").all(sid, since);
-      const ratingRows = db.query<{ rating: number; c: number }, [string]>("SELECT rating, COUNT(*) AS c FROM feedback WHERE session_id = ? AND rating IS NOT NULL GROUP BY rating").all(sid);
-      const comments = db.query<{ id: string; rating: number | null; comment: string | null; tags: string | null; submitted_at: number }, [string]>("SELECT id, rating, comment, tags, submitted_at FROM feedback WHERE session_id = ? AND (comment IS NOT NULL OR tags IS NOT NULL OR rating IS NOT NULL) ORDER BY submitted_at DESC LIMIT 50").all(sid);
-      return json({
-        pulse: { window_seconds: 300, counts: Object.fromEntries(pulseRows.map((r) => [r.value, r.c])), total: pulseRows.reduce((sum, r) => sum + r.c, 0) },
-        session_feedback: {
-          total: db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM feedback WHERE session_id = ?").get(sid)?.c ?? 0,
-          rating_distribution: Object.fromEntries(ratingRows.map((r) => [String(r.rating), r.c])),
-          comments: comments.map((c) => ({ ...c, tags: c.tags ? JSON.parse(c.tags) : [] })),
-        },
-      });
+      return json(feedbackSummaryPayload(sid));
     }
 
     const qaEventsMatch = path.match(/^\/api\/sessions\/([a-z0-9]+)\/qa\/events$/);
@@ -1906,7 +1913,8 @@ Bun.serve({
           sseClients.add(client);
           const publicPayload = attendeeQaPayload(sid);
           const presenterPayload = includePresenter ? presenterQaPayload(sid) : null;
-          const payload = includePresenter ? { public: publicPayload, presenter: presenterPayload } : { public: publicPayload };
+          const feedbackPayload = includePresenter ? feedbackSummaryPayload(sid) : null;
+          const payload = includePresenter ? { public: publicPayload, presenter: presenterPayload, feedback: feedbackPayload } : { public: publicPayload };
           if (publicPayload || presenterPayload) controller.enqueue(sseEncoder.encode(`event: qa\ndata: ${JSON.stringify(payload)}\n\n`));
           const keepAlive = setInterval(() => {
             try { controller.enqueue(sseEncoder.encode(`: keepalive\n\n`)); } catch { clearInterval(keepAlive); sseClients.delete(client); }

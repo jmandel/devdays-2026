@@ -15,7 +15,7 @@ export type FeedbackSummary = {
   pulse: { window_seconds: number; counts: Record<string, number>; total: number };
   session_feedback: { total: number; rating_distribution: Record<string, number>; comments: { id: string; rating: number | null; comment: string | null; tags: string[]; submitted_at: number }[] };
 };
-export type SsePayload = { public?: PublicQaPayload | null; presenter?: PresenterQaPayload | null };
+export type SsePayload = { public?: PublicQaPayload | null; presenter?: PresenterQaPayload | null; feedback?: FeedbackSummary | null };
 
 type QaState = {
   talk?: Talk;
@@ -85,7 +85,7 @@ export const useQaStore = create<QaState>((set, get) => ({
     es.addEventListener("qa", (event) => {
       try {
         const data = JSON.parse((event as MessageEvent).data) as SsePayload;
-        set({ publicPayload: data.public || undefined, presenterPayload: data.presenter || undefined, connection: "live" });
+        set({ publicPayload: data.public || undefined, presenterPayload: data.presenter || undefined, feedbackSummary: data.feedback || get().feedbackSummary, connection: "live" });
       } catch {}
     });
     set({ eventSource: es });

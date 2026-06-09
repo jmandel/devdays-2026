@@ -4,11 +4,11 @@ This repository contains talk preparation materials for Josh Mandel's DevDays 20
 
 ## Contents
 
-- [talks.md](talks.md): source schedule/order for the sessions.
-- [talks-to-relevant-posts.md](talks-to-relevant-posts.md): mapping from each talk to relevant blog posts and repositories.
+- [talks.md](prep/talks.md): source schedule/order for the sessions.
+- [talks-to-relevant-posts.md](prep/talks-to-relevant-posts.md): mapping from each talk to relevant blog posts and repositories.
 - [prep/README.md](prep/README.md): prep index by scheduled session.
 - [prep/deck-ethos.md](prep/deck-ethos.md): working principles for making these decks.
-- [prep/decks/](prep/decks/): generated deck materials. Each deck directory generally includes `deck.md`, `visual-brief.md`, `prompts/`, `slides/`, `preview.png`, `deck.html`, and `deck.pptx`.
+- [decks/](decks/): generated deck materials and exports.
 
 ## Publication Scope
 
@@ -18,10 +18,10 @@ Generated decks are kept in the repo because the slide images are the primary pr
 
 ## Decks
 
-- `prep/decks/smart-ecosystem/`
-- `prep/decks/kill-the-clipboard-panel/`
-- `prep/decks/digital-credentials-sd-jwt/`
-- `prep/decks/llm-agents-health-data/`
-- `prep/decks/conversational-interop/`
+- `decks/smart-ecosystem/`
+- `decks/kill-the-clipboard-panel/`
+- `decks/digital-credentials-sd-jwt/`
+- `decks/llm-agents-health-data/`
+- `decks/conversational-interop/`
 
 Open a `deck.html` file in a browser for a self-contained web deck, or use `deck.pptx` for PowerPoint.

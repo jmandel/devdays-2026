@@ -114,8 +114,8 @@ The thesis: SMART App Launch solved the app/API handshake. SMART User Access Bra
 
 **Setup**
 
-- Open local post: `/home/jmandel/hobby/blog/src/content/blog/linkedin/7000-clicks-to-register-a-fhir-app/index.md`.
-- Open local post: `/home/jmandel/hobby/blog/src/content/blog/linkedin/i-registered-health-skillz-at-500-epic-sites-then-couldn-t-connect/index.md`.
+- Open local post: `https://joshuamandel.com/blog/posts/7000-clicks-to-register-a-fhir-app/`.
+- Open local post: `https://joshuamandel.com/blog/posts/i-registered-health-skillz-at-500-epic-sites-then-couldn-t-connect/`.
 - Open Health Skillz repo paths if available online: `blog/epic/epic-activate-all.js` and `blog/epic/2026-02-11-epic-activation-journal.md`.
 
 **Exact flow**
@@ -208,11 +208,11 @@ The thesis: SMART App Launch solved the app/API handshake. SMART User Access Bra
 - Scheduling Links teaser diagram.
 - Repo links to keep handy: [jmandel/health-skillz](https://github.com/jmandel/health-skillz) and [jmandel/smart-permission-tickets-wip](https://github.com/jmandel/smart-permission-tickets-wip).
 - Local source posts read for this prep:
-  - `/home/jmandel/hobby/blog/src/content/blog/linkedin/smart-permission-tickets-argonaut-launch/index.md`
-  - `/home/jmandel/hobby/blog/src/content/blog/linkedin/authorization-as-a-network-scaling-problem/index.md`
-  - `/home/jmandel/hobby/blog/src/content/blog/linkedin/7000-clicks-to-register-a-fhir-app/index.md`
-  - `/home/jmandel/hobby/blog/src/content/blog/linkedin/i-registered-health-skillz-at-500-epic-sites-then-couldn-t-connect/index.md`
-  - `/home/jmandel/hobby/blog/src/content/blog/linkedin/health-skillz-why-i-built-my-own-health-record-connector-for-claude-ai-codex/index.md`
+  - `https://joshuamandel.com/blog/posts/smart-permission-tickets-argonaut-launch/`
+  - `https://joshuamandel.com/blog/posts/authorization-as-a-network-scaling-problem/`
+  - `https://joshuamandel.com/blog/posts/7000-clicks-to-register-a-fhir-app/`
+  - `https://joshuamandel.com/blog/posts/i-registered-health-skillz-at-500-epic-sites-then-couldn-t-connect/`
+  - `https://joshuamandel.com/blog/posts/health-skillz-why-i-built-my-own-health-record-connector-for-claude-ai-codex/`
 
 ## Current Web Context and Citations
 

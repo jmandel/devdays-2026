@@ -1,6 +1,8 @@
 # DevDays Talk Prep Index
 
-This directory contains one prep file per talk. Each file was drafted by a dedicated prep agent that read `talks.md`, the relevant local blog posts from `talks-to-relevant-posts.md`, and current web sources.
+This directory contains one prep file per talk, the source talk list, the blog/repo mapping, and publication notes. The generated decks live in [`../decks`](../decks/).
+
+Each prep file was drafted by a dedicated prep agent that read `talks.md`, the relevant blog posts from `talks-to-relevant-posts.md`, and current web sources.
 
 ## Prep Files
 

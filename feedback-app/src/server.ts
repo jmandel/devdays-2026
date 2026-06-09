@@ -154,14 +154,14 @@ db.exec(`
     decision_type TEXT NOT NULL,
     question_id   TEXT,
     submission_id TEXT,
-    Comment_json  TEXT NOT NULL DEFAULT '{}',
+    payload_json  TEXT NOT NULL DEFAULT '{}',
     created_at    INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
   CREATE TABLE IF NOT EXISTS qa_published_views (
     session_id    TEXT NOT NULL,
     view_name     TEXT NOT NULL,
-    Comment_json  TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
     version       INTEGER NOT NULL DEFAULT 1,
     generated_at  INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY(session_id, view_name)
@@ -172,7 +172,7 @@ db.exec(`
     session_id    TEXT NOT NULL REFERENCES sessions(id),
     question_id   TEXT,
     action        TEXT NOT NULL,
-    Comment_json  TEXT NOT NULL DEFAULT '{}',
+    payload_json  TEXT NOT NULL DEFAULT '{}',
     created_at    INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
@@ -437,16 +437,16 @@ function qaPayload(sessionId: string, view: "public" | "presenter" | "slides") {
     created_at: q.created_at,
     answered_at: q.answered_at,
   }));
-  const Comment = { view, generated_at: Math.floor(Date.now() / 1000), session: sessionPacket(session), questions };
+  const payload = { view, generated_at: Math.floor(Date.now() / 1000), session: sessionPacket(session), questions };
   db.query(`
-    INSERT INTO qa_published_views (session_id, view_name, Comment_json, generated_at)
+    INSERT INTO qa_published_views (session_id, view_name, payload_json, generated_at)
     VALUES (?, ?, ?, unixepoch())
     ON CONFLICT(session_id, view_name) DO UPDATE SET
-      Comment_json = excluded.Comment_json,
+      payload_json = excluded.payload_json,
       version = qa_published_views.version + 1,
       generated_at = unixepoch()
-  `).run(sessionId, view, JSON.stringify(Comment));
-  return Comment;
+  `).run(sessionId, view, JSON.stringify(payload));
+  return payload;
 }
 
 function recomputeSupport(questionId: string) {
@@ -488,7 +488,7 @@ async function processQaFallback(sessionId: string, limit = 25) {
 }
 
 function recordModeratorAction(sessionId: string, questionId: string | null, action: string, Comment: unknown = {}) {
-  db.query("INSERT INTO qa_moderator_actions (id, session_id, question_id, action, Comment_json) VALUES (?, ?, ?, ?, ?)")
+  db.query("INSERT INTO qa_moderator_actions (id, session_id, question_id, action, payload_json) VALUES (?, ?, ?, ?, ?)")
     .run(randomId("m"), sessionId, questionId, action, JSON.stringify(Comment));
 }
 
@@ -814,23 +814,34 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
         <span class="pill ${session.active ? "pill-active" : "pill-closed"}" style="margin-top:6px">${session.active ? "open" : "closed"}</span>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <a href="/admin/talks/${session.id}" class="btn btn-primary btn-sm">Q&A console</a>
-        <a href="/slides/t/${session.id}/qa" class="btn btn-outline btn-sm" target="_blank">slides</a>
-        <a href="/admin/talks/${session.id}/qr" class="btn btn-outline btn-sm">QR</a>
+        <a href="/t/${session.id}" class="btn btn-primary btn-sm" target="_blank">view attendee page</a>
+        ${session.slides_url ? `<a href="${escHtml(session.slides_url)}" class="btn btn-outline btn-sm" target="_blank" rel="noopener">open slides</a>` : ""}
         <a href="/admin/talks/${session.id}/export" class="btn btn-sm btn-outline">export CSV</a>
         <form method="POST" action="/admin/talks/${session.id}/toggle" style="display:inline">
           <button type="submit" class="btn btn-sm ${session.active ? "btn-danger" : "btn-success"}">
-            ${session.active ? "close talk page" : "reopen talk page"}
+            ${session.active ? "close attendee page" : "reopen attendee page"}
           </button>
         </form>
       </div>
     </div>
-    <div style="margin-top:16px;padding:12px;background:var(--bg);border-radius:10px;font-size:0.85rem;word-break:break-all">
-      <strong>attendee page URL:</strong> <a href="${sessionUrl}" target="_blank">${escHtml(sessionUrl)}</a>
-    </div>
   </div>
 
-  ${accessPanel(session.id, auth, freshToken)}
+  <div class="card" id="share">
+    <p class="eyebrow" style="margin-bottom:8px">Share</p>
+    <h2>Audience link and QR</h2>
+    <p class="muted mt-8">Use this one public link for slides, questions, and feedback. This is safe to show on screen.</p>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;margin-top:16px">
+      <div>
+        <label class="muted" style="display:block;margin-bottom:6px;font-weight:900">Attendee page</label>
+        <input type="text" readonly value="${escHtml(sessionUrl)}" onclick="this.select()" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+          <a href="/t/${session.id}" class="btn btn-primary btn-sm" target="_blank">open attendee page</a>
+          <button type="button" class="btn btn-outline btn-sm" data-copy="${escHtml(sessionUrl)}">copy link</button>
+        </div>
+      </div>
+      <a class="qr-mini" href="/admin/talks/${session.id}/qr" title="Open large QR page" style="width:132px;height:132px;text-decoration:none"><img src="${qrImageUrl(sessionUrl, 220)}" alt="QR code" style="width:110px;height:110px"><span class="muted" style="position:absolute;left:-9999px">Open large QR page</span></a>
+    </div>
+  </div>
 
   <div class="kpi-grid">
     <div class="card kpi" style="padding:20px">
@@ -859,7 +870,7 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
 
   <div class="card" id="questions">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
-      <div><h2>Questions</h2><p class="muted">Audience Q&A and voting. Use the controls to open, pause, or close new questions.</p></div>
+      <div><p class="eyebrow" style="margin-bottom:8px">Questions</p><h2>Audience Q&A</h2><p class="muted">Public questions from attendees. Open/pause question intake and moderate what appears on screen.</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${["open", "paused", "closed"].map((st) => `<form method="POST" action="/admin/talks/${session.id}/state/${st}"><button class="btn btn-outline btn-sm">${st}</button></form>`).join("")}
         <a class="btn btn-outline btn-sm" href="/slides/s/${session.id}/qa" target="_blank">Projector view</a>
@@ -869,8 +880,8 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
   </div>
 
   ${total > 0 ? `
-  <div class="card table-card" style="overflow-x:auto">
-    <div style="padding:16px 20px 0"><h2>Responses</h2></div>
+  <div class="card table-card" id="feedback" style="overflow-x:auto">
+    <div style="padding:16px 20px 0"><p class="eyebrow" style="margin-bottom:8px">Feedback</p><h2>Live signals and comments</h2><p class="muted mt-8">Private audience feedback for the presenter/organizer. Questions are managed separately above.</p></div>
     <table style="width:100%;border-collapse:collapse;font-size:0.875rem">
       <thead>
         <tr style="background:var(--bg);border-bottom:2px solid var(--border)">
@@ -883,7 +894,9 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
       </thead>
       <tbody>${feedbackRows}</tbody>
     </table>
-  </div>` : `<div class="card text-center"><p class="muted">No signals yet. Project the QR and wait for attendee page.</p></div>`}
+  </div>` : `<div class="card text-center" id="feedback"><p class="eyebrow" style="margin-bottom:8px">Feedback</p><h2>Live signals and comments</h2><p class="muted mt-8">No feedback yet. Share the attendee page and invite people to send signals any time.</p></div>`}
+
+  <div id="access">${accessPanel(session.id, auth, freshToken)}</div>
 </div>`;
 
   return layout(`Admin: ${session.title}`, body, true, auth);
@@ -999,15 +1012,20 @@ function attendeePage(sessionId: string) {
   const qaOpen = session.qa_enabled && session.qa_state === "open";
   const qaQuestions = publicQuestions(sessionId, true).slice(0, 12);
   const qaPanel = session.qa_enabled ? `<section class="card" id="qaPanel">
-    <h2>live Q&A</h2>
-    <p class="muted mt-8">Ask a question or vote on questions from other attendees.</p>
+    <p class="eyebrow" style="margin-bottom:8px">Questions</p>
+    <h2>Ask a question</h2>
+    <p class="muted mt-8">Questions are public to the room.</p>
     ${qaOpen ? `<form id="qaForm" class="mt-16">
       <textarea name="question" id="qaQuestion" maxlength="1000" required placeholder="Ask a concise question for the presenter…"></textarea>
       <button type="submit" class="btn btn-primary mt-8" style="width:100%">submit question</button>
       <p class="muted mt-8" id="qaStatus"></p>
-    </form>` : `<p class="muted mt-16">Q&A attendee page is not accepting new signals.</p>`}
-    <div id="qaPublic" class="mt-16">
-      ${qaQuestions.length ? qaQuestions.map((q) => `<div class="qa-item" data-qid="${q.id}"><strong>${escHtml(q.display_text)}</strong><div class="qa-meta"><button type="button" class="btn btn-outline qa-vote" data-vote="${q.id}" data-dir="up">👍</button><button type="button" class="btn btn-outline qa-vote" data-vote="${q.id}" data-dir="down">👎</button><span>score=${q.support_count}</span><span>${escHtml(q.status)}</span></div></div>`).join("") : `<p class="muted">No public Q&A signals yet.</p>`}
+    </form>` : `<p class="muted mt-16">Questions are closed right now.</p>`}
+    <div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px">
+      <h2 style="font-size:1.05rem">Questions from the room</h2>
+      <p class="muted mt-8">Vote on questions you want the presenter to answer.</p>
+      <div id="qaPublic" class="mt-16">
+        ${qaQuestions.length ? qaQuestions.map((q) => `<div class="qa-item" data-qid="${q.id}"><strong>${escHtml(q.display_text)}</strong><div class="qa-meta"><button type="button" class="btn btn-outline qa-vote" data-vote="${q.id}" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="${q.id}" data-dir="down">👎 down</button><span>score=${q.support_count}</span></div></div>`).join("") : `<p class="muted">No questions yet.</p>`}
+      </div>
     </div>
   </section>` : "";
 
@@ -1022,8 +1040,9 @@ function attendeePage(sessionId: string) {
   </div>
 
   <div class="card" style="margin-bottom:16px">
-    <h2>Slides</h2>
-    <p class="muted mt-8">Open the session slides in a new tab.</p>
+    <p class="eyebrow" style="margin-bottom:8px">Slides</p>
+    <h2>Open the deck</h2>
+    <p class="muted mt-8">Leave this page open and launch the slides in a new tab.</p>
     ${session.slides_url ? `<a class="btn btn-primary mt-16" href="${escHtml(session.slides_url)}" target="_blank" rel="noopener" style="width:100%">Open slides</a>` : `<p class="muted mt-16">Slides link coming soon.</p>`}
   </div>
 
@@ -1031,39 +1050,9 @@ function attendeePage(sessionId: string) {
 
   <form method="POST" action="/t/${session.id}/submit" id="feedbackForm">
     <div class="card">
-      <h2>Quick feedback</h2>
-      <div style="display:flex;gap:8px;justify-content:center;margin-top:12px" id="ratingRow" role="group" aria-label="Star rating">
-        ${[1, 2, 3, 4, 5].map((r) => `
-          <label style="cursor:pointer;text-align:center">
-            <input type="radio" name="rating" value="${r}" style="position:absolute;opacity:0;width:0" />
-            <span class="star" data-v="${r}">0${r}</span>
-          </label>`
-        ).join("")}
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>How is it going?</h2>
-      <div style="display:flex;gap:12px;justify-content:center;margin-top:12px;flex-wrap:wrap">
-        ${[
-          { val: "makes_sense", emoji: "✓", label: "makes sense" },
-          { val: "confused", emoji: "?", label: "confused" },
-          { val: "too_fast", emoji: "→", label: "too fast" },
-          { val: "great_demo", emoji: "★", label: "great demo" },
-        ].map((s) => `
-          <label style="cursor:pointer">
-            <input type="radio" name="sentiment" value="${s.val}" style="position:absolute;opacity:0;width:0" />
-            <div class="sentiment-btn" data-v="${s.val}" style="">
-              <div style="font-size:1.55rem;color:var(--line-hot);font-weight:900">${s.emoji}</div>
-              <div style="font-size:0.85rem;font-weight:600;margin-top:4px">${s.label}</div>
-            </div>
-          </label>`
-        ).join("")}
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Feedback signals <span class="muted" style="font-size:0.85rem;font-weight:400">(pick any)</span></h2>
+      <p class="eyebrow" style="margin-bottom:8px">Feedback</p>
+      <h2>Send a private signal</h2>
+      <p class="muted mt-8">This goes to the presenter/organizer, not the public question list. Send updates any time.</p>
       <div style="margin-top:12px">
         ${QUICK_TAGS.map((t) => `<span class="chip" data-tag="${escHtml(t)}" tabindex="0" role="checkbox" aria-checked="false">${escHtml(t)}</span>`).join("")}
       </div>
@@ -1071,9 +1060,9 @@ function attendeePage(sessionId: string) {
     </div>
 
     <div class="card">
-      <h2>Comment <span class="muted" style="font-size:0.85rem;font-weight:400">(optional)</span></h2>
+      <h2>Add a note <span class="muted" style="font-size:0.85rem;font-weight:400">(optional)</span></h2>
       <div style="margin-top:12px;position:relative">
-        <textarea name="comment" id="commentArea" rows="3" placeholder="Type notes or dictate Comment…"></textarea>
+        <textarea name="comment" id="commentArea" rows="3" placeholder="Optional: what should the presenter know?"></textarea>
         <button type="button" id="micBtn" title="Dictate" aria-label="Start dictation" style="position:absolute;bottom:10px;right:10px;width:54px;height:34px;padding:0;font-size:.72rem">MIC</button>
       </div>
       <p class="muted mt-8" style="font-size:0.8rem" id="micStatus"></p>
@@ -1095,7 +1084,7 @@ async function refreshQa() {
   const res = await fetch('/api/sessions/${session.id}/qa/public.json');
   if (!res.ok) return;
   const data = await res.json();
-  qaPublic.innerHTML = data.questions.length ? data.questions.map((q) => '<div class="qa-item"><strong>' + escapeHtml(q.text) + '</strong><div class="qa-meta"><button type="button" class="btn btn-outline qa-vote" data-vote="' + q.id + '" data-dir="up">👍</button><button type="button" class="btn btn-outline qa-vote" data-vote="' + q.id + '" data-dir="down">👎</button><span>score=' + q.support_count + '</span><span>' + q.status + '</span></div></div>').join('') : '<p class="muted">No public Q&A signals yet.</p>';
+  qaPublic.innerHTML = data.questions.length ? data.questions.map((q) => '<div class="qa-item"><strong>' + escapeHtml(q.text) + '</strong><div class="qa-meta"><button type="button" class="btn btn-outline qa-vote" data-vote="' + q.id + '" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="' + q.id + '" data-dir="down">👎 down</button><span>score=' + q.support_count + '</span></div></div>').join('') : '<p class="muted">No questions yet.</p>';
 }
 function escapeHtml(s) { return String(s).replace(/[&<>\"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
 qaForm && qaForm.addEventListener('submit', async (e) => {
@@ -1105,63 +1094,21 @@ qaForm && qaForm.addEventListener('submit', async (e) => {
   qaStatus.textContent = 'Submitting question…';
   const res = await fetch('/api/sessions/${session.id}/qa/questions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question }) });
   const data = await res.json().catch(() => ({}));
-  qaStatus.textContent = res.ok ? 'Question submitted.' : ('Error: ' + (data.error || 'rejected'));
+  qaStatus.textContent = res.ok ? 'Question submitted.' : ('Error: ' + (data.message || data.error || 'Question could not be saved.')); console[res.ok ? 'info' : 'warn']('qa submit response', res.status, data);
   if (res.ok) { document.getElementById('qaQuestion').value = ''; setTimeout(refreshQa, 250); }
 });
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest && e.target.closest('[data-vote]');
   if (!btn) return;
   btn.disabled = true;
-  await fetch('/api/sessions/${session.id}/qa/questions/' + btn.dataset.vote + '/vote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ value: btn.dataset.dir === 'down' ? -1 : 1 }) });
+  const res = await fetch('/api/sessions/${session.id}/qa/questions/' + btn.dataset.vote + '/vote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ value: btn.dataset.dir === 'down' ? -1 : 1 }) });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.message || data.error || 'Vote could not be saved.');
+  }
   await refreshQa();
 });
 setInterval(refreshQa, 8000);
-
-// Star rating
-const stars = document.querySelectorAll('.star');
-const ratingInputs = document.querySelectorAll('input[name=rating]');
-function setStars(n) {
-  stars.forEach((s) => {
-    const v = parseInt(s.dataset.v);
-    s.textContent = '0' + v;
-    s.style.color = v <= n ? 'var(--line-hot)' : 'var(--muted)';
-    s.style.background = v <= n ? 'rgba(50,255,154,.10)' : '#05090c';
-    s.style.borderColor = v <= n ? 'var(--line-hot)' : '#315447';
-    s.style.transform = v === n ? 'translateY(-2px)' : 'translateY(0)';
-  });
-}
-ratingInputs.forEach((inp) => inp.addEventListener('change', () => setStars(parseInt(inp.value))));
-stars.forEach((s) => {
-  s.addEventListener('mouseover', () => setStars(parseInt(s.dataset.v)));
-  s.addEventListener('click', () => {
-    const v = parseInt(s.dataset.v);
-    ratingInputs.forEach((i) => { if (parseInt(i.value) === v) i.checked = true; });
-    setStars(v);
-  });
-});
-document.getElementById('ratingRow').addEventListener('mouseleave', () => {
-  const checked = [...ratingInputs].find((i) => i.checked);
-  setStars(checked ? parseInt(checked.value) : 0);
-});
-
-// Sentiment
-const sentBtns = document.querySelectorAll('.sentiment-btn');
-const sentInputs = document.querySelectorAll('input[name=sentiment]');
-sentInputs.forEach((inp) => {
-  inp.addEventListener('change', () => {
-    sentBtns.forEach((b) => {
-      const active = b.dataset.v === inp.value && inp.checked;
-      b.style.background = active ? 'rgba(50,255,154,.12)' : '';
-      b.style.color = active ? 'var(--line-hot)' : '';
-      b.style.borderColor = active ? 'var(--line-hot)' : '#315447';
-    });
-  });
-});
-sentBtns.forEach((b) => {
-  b.addEventListener('click', () => {
-    sentInputs.forEach((i) => { if (i.value === b.dataset.v) { i.checked = true; i.dispatchEvent(new Event('change')); }});
-  });
-});
 
 // Feedback signals
 const chips = document.querySelectorAll('.chip[data-tag]');
@@ -1457,30 +1404,55 @@ Bun.serve({
     if (qaApiPublicMatch && method === "GET") {
       const view = qaApiPublicMatch[2] as "public" | "presenter" | "slides";
       if (view === "presenter" && !canManageRoom(auth, qaApiPublicMatch[1])) return json({ error: "unauthorized" }, 401);
-      const Comment = qaPayload(qaApiPublicMatch[1], view);
-      return Comment ? json(Comment) : json({ error: "not_found" }, 404);
+      const payload = qaPayload(qaApiPublicMatch[1], view);
+      return payload ? json(payload) : json({ error: "not_found" }, 404);
     }
 
     const qaApiSubmitMatch = path.match(/^\/api\/sessions\/([a-z0-9]+)\/qa\/questions$/);
     if (qaApiSubmitMatch && method === "POST") {
       const sid = qaApiSubmitMatch[1];
-      const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sid);
       const { key, isNew } = getSubmitterKey(req);
-      if (!session) return json({ error: "not_found" }, 404, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
-      if (!session.qa_enabled || session.qa_state !== "open") return json({ error: "qa_not_open", qa_state: session.qa_state }, 409, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
-      const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-      const text = normalizeQuestionText(String(body.question ?? body.text ?? ""));
-      if (text.length < 5) return json({ error: "question_too_short" }, 400, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
-      if (text.length > 1000) return json({ error: "question_too_long" }, 400, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
-      const hash = await sha256Hex(text);
-      const retry = db.query<{ id: string; question_id: string | null }, [string, string, string]>("SELECT id, question_id FROM qa_question_submissions WHERE session_id=? AND submitter_key=? AND normalized_hash=? LIMIT 1").get(sid, key, hash);
-      if (retry) return json({ ok: true, status: "duplicate_retry", submission_id: retry.id, question_id: retry.question_id }, 200, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
-      const qsid = randomId("sub");
-      db.query("INSERT INTO qa_question_submissions (id, session_id, submitter_key, raw_text, normalized_hash) VALUES (?, ?, ?, ?, ?)").run(qsid, sid, key, text, hash);
-      recordInteraction(sid, key, "question", null, text, qsid);
-      const qid = await promoteSubmissionFallback(sid, qsid, text);
-      qaPayload(sid, "public"); qaPayload(sid, "presenter"); qaPayload(sid, "slides");
-      return json({ ok: true, status: "received", submission_id: qsid, question_id: qid }, 202, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
+      const cookieHeaders: Record<string, string> = isNew ? { "Set-Cookie": cookieHeader(key) } : {};
+      try {
+        const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sid);
+        if (!session) {
+          console.warn(JSON.stringify({ event: "qa_question_rejected", reason: "not_found", session_id: sid }));
+          return json({ error: "not_found", message: "Talk not found." }, 404, cookieHeaders);
+        }
+        if (!session.qa_enabled || session.qa_state !== "open") {
+          console.warn(JSON.stringify({ event: "qa_question_rejected", reason: "qa_not_open", session_id: sid, qa_state: session.qa_state, qa_enabled: session.qa_enabled }));
+          return json({ error: "qa_not_open", message: "Questions are closed right now.", qa_state: session.qa_state }, 409, cookieHeaders);
+        }
+        const body = await req.json().catch((err) => {
+          console.warn(JSON.stringify({ event: "qa_question_bad_json", session_id: sid, error: String(err) }));
+          return {};
+        }) as Record<string, unknown>;
+        const text = normalizeQuestionText(String(body.question ?? body.text ?? ""));
+        if (text.length < 5) {
+          console.warn(JSON.stringify({ event: "qa_question_rejected", reason: "question_too_short", session_id: sid, length: text.length }));
+          return json({ error: "question_too_short", message: "Please enter a question with at least 5 characters." }, 400, cookieHeaders);
+        }
+        if (text.length > 1000) {
+          console.warn(JSON.stringify({ event: "qa_question_rejected", reason: "question_too_long", session_id: sid, length: text.length }));
+          return json({ error: "question_too_long", message: "Please keep questions under 1000 characters." }, 400, cookieHeaders);
+        }
+        const hash = await sha256Hex(text);
+        const retry = db.query<{ id: string; question_id: string | null }, [string, string, string]>("SELECT id, question_id FROM qa_question_submissions WHERE session_id=? AND submitter_key=? AND normalized_hash=? LIMIT 1").get(sid, key, hash);
+        if (retry) {
+          console.info(JSON.stringify({ event: "qa_question_duplicate_retry", session_id: sid, submission_id: retry.id, question_id: retry.question_id }));
+          return json({ ok: true, status: "duplicate_retry", submission_id: retry.id, question_id: retry.question_id }, 200, cookieHeaders);
+        }
+        const qsid = randomId("sub");
+        db.query("INSERT INTO qa_question_submissions (id, session_id, submitter_key, raw_text, normalized_hash) VALUES (?, ?, ?, ?, ?)").run(qsid, sid, key, text, hash);
+        recordInteraction(sid, key, "question", null, text, qsid);
+        const qid = await promoteSubmissionFallback(sid, qsid, text);
+        qaPayload(sid, "public"); qaPayload(sid, "presenter"); qaPayload(sid, "slides");
+        console.info(JSON.stringify({ event: "qa_question_received", session_id: sid, submission_id: qsid, question_id: qid, length: text.length }));
+        return json({ ok: true, status: "received", submission_id: qsid, question_id: qid }, 202, cookieHeaders);
+      } catch (err) {
+        console.error(JSON.stringify({ event: "qa_question_error", session_id: sid, error: String(err), stack: err instanceof Error ? err.stack : undefined }));
+        return json({ error: "server_error", message: "Question could not be saved. Please try again." }, 500, cookieHeaders);
+      }
     }
 
     const qaApiVoteMatch = path.match(/^\/api\/sessions\/([a-z0-9]+)\/qa\/questions\/([a-z0-9]+)\/(?:upvote|vote)$/);
@@ -1499,7 +1471,7 @@ Bun.serve({
       return json({ ok: true, question_id: qid, support_count: updated.support_count }, 200, isNew ? { "Set-Cookie": cookieHeader(key) } : {});
     }
 
-    const slidesMatch = path.match(/^\/(?:embed|slides)\/s\/([a-z0-9]+)\/qa$/);
+    const slidesMatch = path.match(/^\/(?:embed|slides)\/(?:s|t)\/([a-z0-9]+)\/qa$/);
     if (slidesMatch && method === "GET") {
       const page = slidesQaPage(slidesMatch[1]);
       return page ? html(page) : html("<h1>Session not found</h1>", 404);

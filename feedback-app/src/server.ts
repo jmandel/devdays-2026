@@ -520,11 +520,12 @@ function attendeeQaPayload(sessionId: string) {
   `).all(sessionId);
   const questions = rows.map((r) => {
     const answered = r.theme_status === "answered" || !!r.answered_at;
-    const hidden = r.theme_status === "hidden" || !!r.hidden_at || r.status === "held";
+    const hidden = r.theme_status === "hidden" || !!r.hidden_at;
+    const held = r.status === "held";
     return {
       id: r.id,
       text: r.raw_text,
-      status: answered ? "answered" : hidden ? "hidden" : r.question_id ? "grouped" : "queued",
+      status: answered ? "answered" : hidden ? "hidden" : held ? "needs detail" : r.question_id ? "grouped" : "queued",
       support_count: rawQuestionSupport(r.id),
       created_at: r.submitted_at,
       theme_id: r.question_id,

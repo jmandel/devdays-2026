@@ -42,3 +42,12 @@ decks/**/*.pre-*.png
 decks/**/contact-sheets/
 
 # Keep final slide images, prompts, deck HTML/PPTX, and deck preview.png files.
+
+# Feedback app local runtime state/secrets
+**/.admin-key
+**/feedback.db
+**/*.sqlite
+**/*.sqlite3
+**/.qa-agent/
+
+**/.admin-key.env

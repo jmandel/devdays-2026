@@ -1,0 +1,11 @@
+node_modules/
+data/*.sqlite*
+.env
+.env.*
+.admin-key
+.DS_Store
+
+feedback.db
+*.sqlite
+*.sqlite3
+.qa-agent/

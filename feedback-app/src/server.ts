@@ -432,7 +432,7 @@ const sseClients = new Set<SseClient>();
 const sseEncoder = new TextEncoder();
 
 function emitQaUpdate(sessionId: string) {
-  const payload = attendeeQaPayload(sessionId);
+  const payload = combinedQaPayload(sessionId);
   if (!payload) return;
   const frame = `event: qa\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const client of [...sseClients]) {
@@ -443,6 +443,35 @@ function emitQaUpdate(sessionId: string) {
 
 function rawQuestionSupport(rawId: string) {
   return db.query<{ c: number }, [string]>("SELECT COALESCE(SUM(value), 0) AS c FROM qa_question_votes WHERE target_kind='raw' AND question_id = ?").get(rawId)?.c ?? 0;
+}
+
+function presenterQaPayload(sessionId: string) {
+  const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
+  if (!session) return null;
+  const rows = publicQuestions(sessionId, true);
+  const active = rows.filter((q) => q.status !== "answered" && q.status !== "hidden");
+  const answeredCount = rows.filter((q) => q.status === "answered").length;
+  const sourceCount = (questionId: string) => db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM qa_question_submissions WHERE question_id = ?").get(questionId)?.c ?? 0;
+  return {
+    view: "presenter",
+    generated_at: Math.floor(Date.now() / 1000),
+    session: sessionPacket(session),
+    themes: active.map((q) => ({
+      id: q.id,
+      text: q.display_text,
+      status: q.status,
+      support_count: q.support_count,
+      source_count: sourceCount(q.id) || 1,
+      priority: q.priority,
+      pinned: !!q.pinned,
+      created_at: q.created_at,
+    })),
+    answered_count: answeredCount,
+  };
+}
+
+function combinedQaPayload(sessionId: string) {
+  return { public: attendeeQaPayload(sessionId), presenter: presenterQaPayload(sessionId) };
 }
 
 function attendeeQaPayload(sessionId: string) {
@@ -1013,19 +1042,21 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
       </div>
     </div>
 
-    <div class="mt-16" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
-      ${leadThemes.length ? leadThemes.map((q, idx) => `<div class="qa-item" style="border-color:${idx === 0 ? "var(--line-hot)" : "var(--line)"};box-shadow:${idx === 0 ? "0 0 24px rgba(50,255,154,.10)" : "none"};margin-top:0">
-        <div class="muted" style="font-size:.78rem;font-weight:900;margin-bottom:8px">THEME ${idx + 1}</div>
-        <strong style="font-size:1.05rem;color:var(--ink)">${escHtml(q.display_text)}</strong>
-        <div class="qa-meta"><span>${sourceCount(q.id)} source${sourceCount(q.id) === 1 ? "" : "s"}</span><span>score=${q.support_count}</span><span>${escHtml(q.status)}</span></div>
-        ${questionActions(q)}
-      </div>`).join("") : `<div class="qa-item mt-16"><strong>No audience themes yet.</strong><p class="muted mt-8">When attendees ask, submissions will be cleaned up, merged, and shown here as presenter-ready questions.</p></div>`}
-    </div>
+    <div data-admin-themes>
+      <div class="mt-16" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+        ${leadThemes.length ? leadThemes.map((q, idx) => `<div class="qa-item" style="border-color:${idx === 0 ? "var(--line-hot)" : "var(--line)"};box-shadow:${idx === 0 ? "0 0 24px rgba(50,255,154,.10)" : "none"};margin-top:0">
+          <div class="muted" style="font-size:.78rem;font-weight:900;margin-bottom:8px">THEME ${idx + 1}</div>
+          <strong style="font-size:1.05rem;color:var(--ink)">${escHtml(q.display_text)}</strong>
+          <div class="qa-meta"><span>${sourceCount(q.id)} source${sourceCount(q.id) === 1 ? "" : "s"}</span><span>score=${q.support_count}</span><span>${escHtml(q.status)}</span></div>
+          ${questionActions(q)}
+        </div>`).join("") : `<div class="qa-item mt-16"><strong>No audience themes yet.</strong><p class="muted mt-8">When attendees ask, submissions will be cleaned up, merged, and shown here as presenter-ready questions.</p></div>`}
+      </div>
 
-    <div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px">
-      <h2 style="font-size:1.05rem">More presenter-ready questions</h2>
-      ${otherQuestions.length ? otherQuestions.map(compactQuestion).join("") : `<p class="muted mt-8">No other live questions.</p>`}
-      ${answeredQuestions ? `<p class="muted mt-16">${answeredQuestions} answered question${answeredQuestions === 1 ? "" : "s"} hidden from this priority view.</p>` : ""}
+      <div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px">
+        <h2 style="font-size:1.05rem">More presenter-ready questions</h2>
+        ${otherQuestions.length ? otherQuestions.map(compactQuestion).join("") : `<p class="muted mt-8">No other live questions.</p>`}
+        ${answeredQuestions ? `<p class="muted mt-16">${answeredQuestions} answered question${answeredQuestions === 1 ? "" : "s"} hidden from this priority view.</p>` : ""}
+      </div>
     </div>
   </div>
 
@@ -1149,6 +1180,37 @@ document.addEventListener('click', async (event) => {
     return;
   }
 });
+
+function escapeHtmlAdmin(s) { return String(s ?? '').replace(/[&<>\"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
+function adminQuestionActions(sessionId, themeId, status) {
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
+    + (status !== 'pinned' ? '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/pin"><button class="btn btn-outline btn-sm">pin</button></form>' : '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/unpin"><button class="btn btn-outline btn-sm">unpin</button></form>')
+    + '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/answer"><button class="btn btn-success btn-sm">answered</button></form>'
+    + '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/hide"><button class="btn btn-danger btn-sm">hide</button></form>'
+    + '</div>';
+}
+function renderAdminThemes(presenter) {
+  const root = document.querySelector('[data-admin-themes]');
+  const sw = document.querySelector('[data-qa-switch]');
+  if (!root || !sw || !presenter) return;
+  const sessionId = sw.dataset.sessionId;
+  const themes = presenter.themes || [];
+  const lead = themes.slice(0, 3);
+  const more = themes.slice(3, 10);
+  const grid = '<div class="mt-16" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">'
+    + (lead.length ? lead.map((q, idx) => '<div class="qa-item" style="border-color:' + (idx === 0 ? 'var(--line-hot)' : 'var(--line)') + ';box-shadow:' + (idx === 0 ? '0 0 24px rgba(50,255,154,.10)' : 'none') + ';margin-top:0"><div class="muted" style="font-size:.78rem;font-weight:900;margin-bottom:8px">THEME ' + (idx + 1) + '</div><strong style="font-size:1.05rem;color:var(--ink)">' + escapeHtmlAdmin(q.text) + '</strong><div class="qa-meta"><span>' + q.source_count + ' source' + (q.source_count === 1 ? '' : 's') + '</span><span>score=' + q.support_count + '</span><span>' + escapeHtmlAdmin(q.status) + '</span></div>' + adminQuestionActions(sessionId, q.id, q.status) + '</div>').join('') : '<div class="qa-item mt-16"><strong>No audience themes yet.</strong><p class="muted mt-8">When attendees ask, submissions will be cleaned up, merged, and shown here as presenter-ready questions.</p></div>')
+    + '</div>';
+  const moreHtml = '<div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px"><h2 style="font-size:1.05rem">More presenter-ready questions</h2>'
+    + (more.length ? more.map((q) => '<div class="qa-item"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><strong>' + escapeHtmlAdmin(q.text) + '</strong><span class="pill pill-active">' + escapeHtmlAdmin(q.status) + '</span></div><div class="qa-meta"><span>score=' + q.support_count + '</span><span>' + new Date(q.created_at * 1000).toLocaleTimeString() + '</span></div>' + adminQuestionActions(sessionId, q.id, q.status) + '</div>').join('') : '<p class="muted mt-8">No other live questions.</p>')
+    + (presenter.answered_count ? '<p class="muted mt-16">' + presenter.answered_count + ' answered question' + (presenter.answered_count === 1 ? '' : 's') + ' hidden from this priority view.</p>' : '')
+    + '</div>';
+  root.innerHTML = grid + moreHtml;
+}
+if (window.EventSource && document.querySelector('[data-admin-themes]')) {
+  const sw = document.querySelector('[data-qa-switch]');
+  const qaEvents = new EventSource('/api/sessions/' + sw.dataset.sessionId + '/qa/events');
+  qaEvents.addEventListener('qa', (event) => { try { renderAdminThemes(JSON.parse(event.data).presenter); } catch {} });
+}
 
 document.addEventListener('submit', async (event) => {
   const form = event.target;
@@ -1370,7 +1432,7 @@ function renderPublicQuestion(q) {
 if (window.EventSource && qaPublic) {
   const qaEvents = new EventSource('/api/sessions/${session.id}/qa/events');
   qaEvents.addEventListener('qa', (event) => {
-    try { const data = JSON.parse(event.data); qaPublic.innerHTML = data.questions.length ? data.questions.map(renderPublicQuestion).join('') : '<p class="muted">No questions yet.</p>'; } catch {}
+    try { const data = JSON.parse(event.data); const feed = data.public || data; qaPublic.innerHTML = feed.questions.length ? feed.questions.map(renderPublicQuestion).join('') : '<p class="muted">No questions yet.</p>'; } catch {}
   });
 }
 qaForm && qaForm.addEventListener('submit', async (e) => {
@@ -1711,7 +1773,7 @@ Bun.serve({
         start(controller) {
           const client = { sessionId: sid, controller };
           sseClients.add(client);
-          const payload = attendeeQaPayload(sid);
+          const payload = combinedQaPayload(sid);
           if (payload) controller.enqueue(sseEncoder.encode(`event: qa\ndata: ${JSON.stringify(payload)}\n\n`));
           const keepAlive = setInterval(() => {
             try { controller.enqueue(sseEncoder.encode(`: keepalive\n\n`)); } catch { clearInterval(keepAlive); sseClients.delete(client); }

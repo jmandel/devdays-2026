@@ -1,0 +1,44 @@
+# Local research/background material
+background/
+
+# Nested repositories, package installs, caches
+**/.git/
+**/node_modules/
+**/.cache/
+**/.next/
+**/dist/
+**/build/
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# Deck generation intermediates
+prep/decks/**/archive/
+prep/decks/**/backups/
+prep/decks/**/generated-image-cache/
+prep/decks/**/generated-visual-drafts/
+prep/decks/**/regeneration-tests/
+prep/decks/**/regeneration-prompts/
+prep/decks/**/image-prompts-draft/
+prep/decks/**/stylelock-assets/
+prep/decks/**/slides-*/
+prep/decks/**/slides-consistent-v*/
+prep/decks/**/slides-stylelock/
+prep/decks/**/final-image-sequence/
+# Retired duplicate named exports; canonical raw slide images are slides/slide-NNN.png.
+prep/decks/**/slide-[0-9].*
+prep/decks/**/slide-[0-9][0-9].*
+prep/decks/**/slides/[0-9][0-9]-*.png
+prep/decks/**/*.pre-*.png
+prep/decks/**/contact-sheets/
+
+# Keep final slide images, prompts, deck HTML/PPTX, and deck preview.png files.

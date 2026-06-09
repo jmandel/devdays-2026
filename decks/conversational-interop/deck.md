@@ -37,7 +37,7 @@ The phrase to repeat:
    Show a transcript turning into a JSON evidence package with FHIR references, note quotes, human answers, and provenance receipts.
 
 7. **Three Layers, Three Jobs**  
-   Clarify roles: FHIR/SMART retrieves authoritative facts; MCP exposes trusted tools over local/provider data; A2A carries cross-organizational task dialogue.
+   Clarify roles: A2A carries cross-organizational task dialogue between distinct agents; each agent uses its own trusted tools against its own system of record. Avoid showing FHIR/tools/A2A as one shared stack.
 
 8. **Design For Delay**  
    Show the liaison UX: quiet task status, needs-input escalation, transcript/artifacts panel, and clean completion. Async is a feature when the agent can do real work.

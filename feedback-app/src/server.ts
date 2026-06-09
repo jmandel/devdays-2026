@@ -823,7 +823,7 @@ function accessPanel(sessionId: string, auth: AuthContext, freshToken: string | 
     <div class="mt-16"><label class="muted" style="display:block;margin-bottom:6px;font-weight:900">presenter message</label><textarea readonly rows="7" onclick="this.select()">${escHtml(presenterMessage)}</textarea></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap" class="mt-16"><button type="button" class="btn btn-primary btn-sm" data-copy="${escHtml(presenterMessage)}">copy presenter message</button><button type="button" class="btn btn-outline btn-sm" data-copy="${escHtml(opUrl)}">copy operator link</button></div>` : `<p class="muted mt-16">Regenerate to reveal a new copyable operator link.</p>`}
     <div style="display:flex;gap:8px;flex-wrap:wrap" class="mt-16">
-      <form method="POST" action="/admin/talks/${sessionId}/capability/regenerate"><button class="btn btn-primary btn-sm">${active ? "regenerate link" : "generate link"}</button></form>
+      <form method="POST" action="/admin/talks/${sessionId}/capability/regenerate"><button class="btn btn-primary btn-sm">${active ? "Regenerate operator link" : "Generate operator link"}</button></form>
       ${active ? `<form method="POST" action="/admin/talks/${sessionId}/capability/revoke"><button class="btn btn-danger btn-sm">revoke link</button></form>` : ""}
     </div>
     <script>document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-copy]');if(!b)return;navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy);b.textContent='copied';setTimeout(()=>b.textContent=b.dataset.copy.startsWith('Your session')?'copy presenter message':'copy operator link',1200);});</script>
@@ -997,7 +997,7 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
         <a href="/admin/talks/${session.id}/export" class="btn btn-sm btn-outline">export CSV</a>
         <form method="POST" action="/admin/talks/${session.id}/toggle" style="display:inline">
           <button type="submit" class="btn btn-sm ${session.active ? "btn-danger" : "btn-success"}">
-            ${session.active ? "close attendee page" : "reopen attendee page"}
+            ${session.active ? "Close public page" : "Reopen public page"}
           </button>
         </form>
       </div>
@@ -1048,12 +1048,12 @@ function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: stri
 
   <div class="card" id="questions">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
-      <div><p class="eyebrow" style="margin-bottom:8px">Questions</p><h2>Bubbled-up audience themes</h2><p class="muted">Presenter-ready questions synthesized from raw audience submissions, with votes and repeated themes bubbled up.</p></div>
+      <div><p class="eyebrow" style="margin-bottom:8px">Run Q&A</p><h2>Synthesized presenter themes</h2><p class="muted">Presenter-ready themes synthesized from public Q&A submissions, with votes and repeated themes bubbled up.</p></div>
       <div class="qa-toolbar">
         <div class="qa-status ${qaStateClass}" data-qa-status>${qaStateLabel}</div>
         ${qaSwitch(session.id, qaIsOpen)}
-        <a class="btn btn-outline btn-sm" href="/slides/s/${session.id}/qa" target="_blank">projector view</a>
-        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}/ai-run" target="_blank" rel="noopener">inspect AI runs</a>
+        <a class="btn btn-outline btn-sm" href="/slides/s/${session.id}/qa" target="_blank">Open projector Q&A</a>
+        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}/ai-run" target="_blank" rel="noopener">AI processing log</a>
       </div>
     </div>
 
@@ -1130,20 +1130,20 @@ function qaAdminPage(sessionId: string, auth: AuthContext) {
       </div>
       <div class="qa-toolbar">
         ${qaSwitch(session.id, qaIsOpen)}
-        <form method="POST" action="/admin/talks/${session.id}/run"><button class="btn btn-primary btn-sm">process questions</button></form>
-        <a class="btn btn-outline btn-sm" href="/slides/t/${session.id}/qa" target="_blank">slides</a>
+        <form method="POST" action="/admin/talks/${session.id}/run"><button class="btn btn-primary btn-sm">Synthesize themes</button></form>
+        <a class="btn btn-outline btn-sm" href="/slides/t/${session.id}/qa" target="_blank">Open projector Q&A</a>
         <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}">feedback</a>
       </div>
     </div>
     <div class="qa-tabs mt-16">
       <div class="card kpi"><div class="kpi-value">${count("live") + count("pinned")}</div><div class="muted">live queue</div></div>
-      <div class="card kpi"><div class="kpi-value">${pending.length}</div><div class="muted">pending/held raw</div></div>
+      <div class="card kpi"><div class="kpi-value">${pending.length}</div><div class="muted">secondary raw</div></div>
       <div class="card kpi"><div class="kpi-value">${count("answered")}</div><div class="muted">answered</div></div>
       <div class="card kpi"><div class="kpi-value">${count("hidden") + count("rejected")}</div><div class="muted">hidden/rejected</div></div>
     </div>
     <div class="qa-grid mt-16">
-      <section class="card"><h2>Questions</h2>${rows.length ? rows.map(questionCard).join("") : `<p class="muted">No questions yet.</p>`}</section>
-      <aside class="card"><h2>Recent submitted questions</h2>${pending.length ? pending.map((p) => `<div class="qa-item"><strong>${escHtml(p.raw_text)}</strong><div class="qa-meta"><span>${p.status}</span><span>${new Date(p.submitted_at * 1000).toLocaleTimeString()}</span></div></div>`).join("") : `<p class="muted">No pending submitted questions.</p>`}
+      <section class="card"><p class="eyebrow">Run Q&A</p><h2>Synthesized presenter themes</h2><p class="muted mt-8">Presenter-ready themes are the main operator queue.</p>${rows.length ? rows.map(questionCard).join("") : `<p class="muted">No synthesized themes yet.</p>`}</section>
+      <aside class="card"><h2>Secondary: raw submissions</h2>${pending.length ? pending.map((p) => `<div class="qa-item"><strong>${escHtml(p.raw_text)}</strong><div class="qa-meta"><span>${p.status}</span><span>${new Date(p.submitted_at * 1000).toLocaleTimeString()}</span></div></div>`).join("") : `<p class="muted">No pending submitted questions.</p>`}
       <h2 class="mt-24">Processing history</h2>${runs.length ? runs.map((r) => `<div class="qa-item"><strong>${escHtml(r.status)}</strong><div class="qa-meta"><span>${new Date(r.started_at * 1000).toLocaleTimeString()}</span>${r.finished_at ? `<span>done=${new Date(r.finished_at * 1000).toLocaleTimeString()}</span>` : ""}</div>${r.summary ? `<p class="muted mt-8">${escHtml(r.summary)}</p>` : ""}${r.error ? `<p style="color:var(--danger)" class="mt-8">${escHtml(r.error)}</p>` : ""}</div>`).join("") : `<p class="muted">No processing runs recorded.</p>`}</aside>
     </div>
   </div>
@@ -1153,8 +1153,8 @@ function qaAdminPage(sessionId: string, auth: AuthContext) {
 
 function qaSwitch(sessionId: string, isOpen: boolean) {
   return `<div class="qa-switch ${isOpen ? "qa-switch-open" : "qa-switch-paused"}" data-qa-switch data-session-id="${sessionId}">
-    <button type="button" data-qa-state="open" aria-pressed="${isOpen ? "true" : "false"}">Accept</button>
-    <button type="button" data-qa-state="paused" aria-pressed="${isOpen ? "false" : "true"}">Pause</button>
+    <button type="button" data-qa-state="open" aria-pressed="${isOpen ? "true" : "false"}">Accept questions</button>
+    <button type="button" data-qa-state="paused" aria-pressed="${isOpen ? "false" : "true"}">Pause questions</button>
   </div>`;
 }
 
@@ -1365,9 +1365,9 @@ function attendeePage(sessionId: string) {
   const qaOpen = session.qa_enabled && session.qa_state === "open";
   const qaQuestions = publicQuestions(sessionId, true).slice(0, 12);
   const qaPanel = session.qa_enabled ? `<section class="card" id="qaPanel">
-    <p class="eyebrow" style="margin-bottom:8px">Questions</p>
-    <h2>Ask a question</h2>
-    <p class="muted mt-8">Questions are public to the room.</p>
+    <p class="eyebrow" style="margin-bottom:8px">Public Q&A</p>
+    <h2>Ask a public question</h2>
+    <p class="muted mt-8">Public Q&A questions are visible to the room.</p>
     ${qaOpen ? `<form id="qaForm" class="mt-16">
       <textarea name="question" id="qaQuestion" maxlength="1000" required placeholder="Ask a concise question for the presenter…"></textarea>
       <button type="submit" class="btn btn-primary mt-8" style="width:100%">submit question</button>
@@ -1403,9 +1403,9 @@ function attendeePage(sessionId: string) {
 
   <form method="POST" action="/t/${session.id}/submit" id="feedbackForm">
     <div class="card">
-      <p class="eyebrow" style="margin-bottom:8px">Feedback</p>
-      <h2>Send a private signal</h2>
-      <p class="muted mt-8">This goes to the presenter/organizer, not the public question list. Send updates any time.</p>
+      <p class="eyebrow" style="margin-bottom:8px">Private feedback to presenter</p>
+      <h2>Send private feedback to ${escHtml(session.presenter || "the presenter")}</h2>
+      <p class="muted mt-8">This goes privately to the presenter/organizer, not Public Q&A. Send updates any time.</p>
       <div style="margin-top:12px">
         ${QUICK_TAGS.map((t) => `<span class="chip" data-tag="${escHtml(t)}" tabindex="0" role="checkbox" aria-checked="false">${escHtml(t)}</span>`).join("")}
       </div>
@@ -1415,7 +1415,7 @@ function attendeePage(sessionId: string) {
     <div class="card">
       <h2>Add a note <span class="muted" style="font-size:0.85rem;font-weight:400">(optional)</span></h2>
       <div style="margin-top:12px;position:relative">
-        <textarea name="comment" id="commentArea" rows="3" placeholder="Optional: what should the presenter know?"></textarea>
+        <textarea name="comment" id="commentArea" rows="3" placeholder="Optional: what should ${session.presenter ? escHtml(session.presenter) : 'the presenter'} know?"></textarea>
         <button type="button" id="micBtn" title="Dictate" aria-label="Start dictation" style="position:absolute;bottom:10px;right:10px;width:54px;height:34px;padding:0;font-size:.72rem">MIC</button>
       </div>
       <p class="muted mt-8" style="font-size:0.8rem" id="micStatus"></p>
@@ -1547,7 +1547,7 @@ function slidesQaPage(sessionId: string) {
     async function tick(){
       const res = await fetch('/api/sessions/${session.id}/qa/slides.json');
       const data = await res.json();
-      box.innerHTML = '<h2>Audience questions</h2>' + (data.questions.length ? data.questions.slice(0,8).map((q,i)=>'<div class="qa-item" style="font-size:1.25rem"><div class="muted">#'+(i+1)+' support='+q.support_count+'</div><strong>'+esc(q.text)+'</strong></div>').join('') : '<p class="muted">No questions yet.</p>');
+      box.innerHTML = '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>Synthesized presenter themes</h2><p class="muted mt-8">Top presenter-ready themes, synthesized from audience questions.</p></div><div class="qa-switch qa-switch-open"><button type="button" aria-pressed="true">Themes</button><button type="button" aria-pressed="false">Raw questions</button></div></div>' + (data.questions.length ? data.questions.slice(0,5).map((q,i)=>'<div class="qa-item" style="font-size:1.45rem;padding:22px;margin-top:16px"><div class="muted">Theme '+(i+1)+' · score '+q.support_count+'</div><strong>'+esc(q.text)+'</strong></div>').join('') : '<p class="muted mt-16">No synthesized themes yet.</p>');
     }
     tick(); setInterval(tick, 5000);
   </script>`;

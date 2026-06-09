@@ -692,25 +692,20 @@ function homePage(auth: AuthContext) {
     ? `<div class="card empty-state"><div style="font-size:2rem;color:var(--line-hot)">∅</div><h3 style="margin:10px 0;color:var(--ink)">No talks yet</h3><p>Create or load talks to begin collecting feedback.</p></div>`
     : sessions.map((s) => {
       const sessionUrl = sessionPublicUrl(s.id);
-      const qr = qrImageUrl(sessionUrl, 160);
       return `<article class="card session-card">
         <div class="session-top">
           <div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
               <span class="pill ${s.active ? "pill-active" : "pill-closed"}">${s.active ? "● live" : "closed"}</span>
-              <span class="pill" style="background:#ede9fe;color:#5b21b6">${s.count} response${s.count !== 1 ? "s" : ""}</span>
+              <span class="pill" style="background:#ede9fe;color:#5b21b6">${s.count} signal${s.count !== 1 ? "s" : ""}</span>
             </div>
             <h3 class="session-title">${escHtml(s.title)}</h3>
-            ${s.presenter ? `<p class="session-meta">speaker=${escHtml(s.presenter)}</p>` : ""}
-            <p class="session-meta">created=${new Date(s.created_at * 1000).toLocaleDateString()}</p>
+            ${s.presenter ? `<p class="session-meta">presenter=${escHtml(s.presenter)}</p>` : ""}
+            <p class="session-meta"><strong>attendee:</strong> <a href="/t/${s.id}" target="_blank">${escHtml(new URL(sessionUrl).pathname)}</a></p>
           </div>
-          <a class="qr-mini" href="/admin/talks/${s.id}/qr" aria-label="View QR code"><img src="${qr}" alt="QR code"></a>
         </div>
         <div class="session-actions">
-          <a href="/admin/talks/${s.id}" class="btn btn-primary btn-sm">control room</a>
-          <a href="/admin/talks/${s.id}" class="btn btn-outline btn-sm">Q&A</a>
-          <a href="/admin/talks/${s.id}/qr" class="btn btn-outline btn-sm">QR</a>
-          <a href="/t/${s.id}" class="btn btn-outline btn-sm" target="_blank">attendee page</a>
+          <a href="/admin/talks/${s.id}" class="btn btn-primary btn-sm">open control room</a>
         </div>
       </article>`;
     }).join("");

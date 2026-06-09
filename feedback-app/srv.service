@@ -10,6 +10,7 @@ Environment=PORT=8000
 Environment=BASE_URL=https://devdays-feedback.exe.xyz
 Environment=DB_PATH=./feedback.db
 EnvironmentFile=-/home/exedev/devdays-2026/feedback-app/.admin-key.env
+ExecStartPre=/bin/sh -c 'for pid in $(/usr/sbin/ss -ltnp "sport = :8000" 2>/dev/null | sed -n "s/.*pid=\([0-9]*\).*/\1/p" | sort -u); do kill "$pid" 2>/dev/null || true; done'
 ExecStart=/home/exedev/.bun/bin/bun run src/server.ts
 Restart=always
 RestartSec=5

@@ -23,6 +23,20 @@ The feedback app is populated from `prep/talks.md` with stable session IDs:
 | `sllmagents` | Let's Build: Making LLM Agents Work with Health Data (FHIR & EHI) |
 | `scoin` | Toward Conversational Interop: Agents Structuring the Long Tail on the Fly |
 
+## Published site
+
+Static decks are deployed to GitHub Pages from the repository root via `.github/workflows/pages.yml`.
+
+```txt
+https://joshuamandel.com/devdays-2026/
+```
+
+Deck URLs follow:
+
+```txt
+https://joshuamandel.com/devdays-2026/decks/<deck-folder>/deck.html
+```
+
 ## Decks
 
 - `decks/smart-ecosystem/`

@@ -2,9 +2,40 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useQaStore, type PublicQuestion, type ThemeQuestion } from "./stores/qaStore";
 
-function sidFromPath() { return location.pathname.split("/").filter(Boolean).at(-1) || ""; }
+function sidFromPath() { const parts = location.pathname.split("/").filter(Boolean); const qa = parts.indexOf("qa"); return qa > 0 ? parts[qa - 1] : (parts.at(-1) || ""); }
 function fmt(ts?: number) { return ts ? new Date(ts * 1000).toLocaleTimeString() : ""; }
 function Status({ value }: { value: string }) { return <span className={`pill ${value}`}>{value}</span>; }
+
+
+function AdminDashboard() {
+  const { adminSessions, loadAdminSessions, createSession } = useQaStore();
+  const [msg, setMsg] = useState("");
+  const [title, setTitle] = useState("");
+  const [presenter, setPresenter] = useState("");
+  const [description, setDescription] = useState("");
+  useEffect(() => { loadAdminSessions().catch(e => setMsg((e as Error).message)); }, []);
+  if (msg === "unauthorized") return <main className="shell"><section className="card"><div className="eyebrow">Admin locked</div><h1>Operator key required</h1><p className="muted">Unlock the admin console to manage talks.</p><a className="btn primary" href="/admin/login-page">Open login</a></section></main>;
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) return;
+    try { const id = await createSession({ title, presenter, description }); location.href = `/admin/talks/${id}`; }
+    catch (e) { setMsg((e as Error).message); }
+  }
+  const totals = adminSessions?.totals;
+  return <main className="shell"><div className="top"><div><div className="brand">DevDays Feedback</div><h1>Admin dashboard</h1></div><form method="POST" action="/logout"><button className="btn">logout</button></form></div>{msg && <div className="notice">{msg}</div>}<section className="grid"><div className="card"><div className="eyebrow">Overview</div><h2>{totals?.sessions ?? 0} talks</h2><p className="muted">{totals?.active ?? 0} active · {totals?.feedback ?? 0} feedback responses</p></div><form className="card" onSubmit={submit}><div className="eyebrow">Create talk</div><h2>New room</h2><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Title" required/><input style={{marginTop:10}} value={presenter} onChange={e=>setPresenter(e.target.value)} placeholder="Presenter"/><textarea style={{marginTop:10}} value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description / room context"/><button className="btn primary" style={{marginTop:10,width:"100%"}}>Create</button></form></section><section className="card"><div className="eyebrow">Talks</div><h2>Rooms</h2>{adminSessions?.sessions.length ? adminSessions.sessions.map(s => <div className="q" key={s.id}><div className="spread"><div><strong>{s.title}</strong><p className="muted">{s.presenter} · {s.feedback_count} feedback</p></div><Status value={s.qa_state}/></div><div className="row"><a className="btn primary" href={`/admin/talks/${s.id}`}>control room</a><a className="btn outline" href={`/t/${s.id}`} target="_blank">attendee</a><a className="btn" href={`/admin/talks/${s.id}/qr`}>QR</a></div></div>) : <p className="muted">No talks yet.</p>}</section></main>;
+}
+
+function LoginPage() {
+  return <main className="shell"><section className="card" style={{maxWidth:520, margin:"64px auto"}}><div className="eyebrow">Admin console locked</div><h1>Enter operator key</h1><form method="POST" action="/admin/login"><input type="password" name="key" autoComplete="current-password" autoFocus required/><button className="btn primary" style={{width:"100%", marginTop:12}}>unlock console</button></form></section></main>;
+}
+
+function SlidesPage() {
+  const id = sidFromPath();
+  const { talk, slidesPayload, connection, loadTalk, loadSlides, connect, disconnect } = useQaStore();
+  useEffect(() => { loadTalk(id); loadSlides(id).catch(()=>{}); connect(id); const t = setInterval(()=>loadSlides(id).catch(()=>{}), 10000); return () => { clearInterval(t); disconnect(); }; }, [id]);
+  const qs = slidesPayload?.questions || [];
+  return <main className="shell" style={{maxWidth:1100}}><div className="top"><div><div className="eyebrow">Projector Q&A</div><h1>{talk?.title || id}</h1></div><Status value={connection}/></div><section className="card"><h2>Audience questions</h2>{qs.length ? qs.slice(0,8).map((q,i)=><div className="q" key={q.id} style={{fontSize:"1.25rem"}}><div className="muted">#{i+1} support={q.support_count}</div><strong>{q.text}</strong></div>) : <p className="muted">No questions yet.</p>}</section></main>;
+}
 
 function AttendeePage() {
   const id = sidFromPath();
@@ -44,6 +75,6 @@ function AdminPage() {
   return <main className="shell"><div className="top"><div><div className="brand">DevDays Control Room</div><h1>{talk?.title || id}</h1><p className="muted">{talk?.presenter}</p></div><Status value={connection}/></div>{error && <div className="notice">{error}</div>}{msg && <div className="notice">{msg}</div>}<section className="card"><div className="spread"><div><div className="eyebrow">Q&A state</div><h2>{qaState}</h2></div><div className="row"><button className="btn success" onClick={()=>call(setQaState(id,"open"))}>accept</button><button className="btn warn" onClick={()=>call(setQaState(id,"paused"))}>pause</button><button className="btn danger" onClick={()=>call(setQaState(id,"closed"))}>close</button><button className="btn outline" onClick={()=>call(runAgent(id))}>run agent</button><a className="btn" href={`/admin/talks/${id}/ai-run`}>AI runs</a><a className="btn" href={`/t/${id}`} target="_blank">attendee</a><a className="btn" href={`/slides/t/${id}/qa`} target="_blank">slides QA</a><a className="btn" href={`/admin/talks/${id}/export`}>export CSV</a></div></div></section><section className="card"><div className="eyebrow">Synthesized themes</div><h2>Presenter queue</h2>{themes.length ? themes.map(q => <ThemeRow key={q.id} q={q} onAction={(a)=>call(action(id,q.id,a))}/>) : <p className="muted">No live themes yet. Submit audience questions or run the agent.</p>}</section></main>;
 }
 function ThemeRow({ q, onAction }: { q: ThemeQuestion; onAction: (a:string)=>void }) { return <div className="q"><div className="spread"><div><strong>{q.text}</strong><div className="meta"><span>score={q.support_count}</span><span>sources={q.source_count ?? "?"}</span><span>priority={q.priority}</span><span>{fmt(q.created_at)}</span></div></div><Status value={q.status}/></div><div className="row" style={{marginTop:10}}>{q.status !== "pinned" ? <button className="btn outline" onClick={()=>onAction("pin")}>pin</button> : <button className="btn outline" onClick={()=>onAction("unpin")}>unpin</button>}<button className="btn success" onClick={()=>onAction("answer")}>answered</button><button className="btn danger" onClick={()=>onAction("hide")}>hide</button>{["hidden","answered"].includes(q.status) && <button className="btn" onClick={()=>onAction("restore")}>restore</button>}</div></div>; }
-function App() { const path = location.pathname; if (path.startsWith("/admin/talks/")) return <AdminPage/>; if (path.startsWith("/t/")) return <AttendeePage/>; return <main className="shell"><h1>DevDays Feedback</h1><p>Unsupported React route.</p></main>; }
+function App() { const path = location.pathname; if (path === "/admin/login-page") return <LoginPage/>; if (path === "/admin" || path === "/admin/dashboard") return <AdminDashboard/>; if (path.startsWith("/admin/talks/")) return <AdminPage/>; if (path.startsWith("/slides/t/") || path.startsWith("/slides/s/") || path.startsWith("/embed/t/") || path.startsWith("/embed/s/")) return <SlidesPage/>; if (path.startsWith("/t/")) return <AttendeePage/>; return <main className="shell"><h1>DevDays Feedback</h1><p>Unsupported React route.</p></main>; }
 
 createRoot(document.getElementById("root")!).render(<App />);

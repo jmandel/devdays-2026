@@ -8,6 +8,13 @@ export type ThemeQuestion = { id: string; text: string; status: string; support_
 export type PublicQaPayload = { view: "public"; generated_at: number; session: SessionPacket; questions: PublicQuestion[] };
 export type PresenterQaPayload = { view: "presenter"; generated_at: number; session: SessionPacket; themes?: ThemeQuestion[]; questions?: ThemeQuestion[]; answered_count?: number };
 export type TalkResponse = { talk: Talk; urls: SessionPacket };
+export type AdminSession = { id: string; title: string; presenter: string; created_at: number; active: boolean; qa_state: string; feedback_count: number };
+export type AdminSessionsResponse = { sessions: AdminSession[]; totals: { sessions: number; active: number; feedback: number } };
+export type SlidesQaPayload = { view: "slides"; generated_at: number; session: SessionPacket; questions: ThemeQuestion[] };
+export type FeedbackSummary = {
+  pulse: { window_seconds: number; counts: Record<string, number>; total: number };
+  session_feedback: { total: number; rating_distribution: Record<string, number>; comments: { id: string; rating: number | null; comment: string | null; tags: string[]; submitted_at: number }[] };
+};
 export type SsePayload = { public?: PublicQaPayload | null; presenter?: PresenterQaPayload | null };
 
 type QaState = {
@@ -15,6 +22,9 @@ type QaState = {
   urls?: SessionPacket;
   publicPayload?: PublicQaPayload;
   presenterPayload?: PresenterQaPayload;
+  slidesPayload?: SlidesQaPayload;
+  adminSessions?: AdminSessionsResponse;
+  feedbackSummary?: FeedbackSummary;
   loading: boolean;
   connection: "idle" | "connecting" | "live" | "error";
   error?: string;
@@ -22,6 +32,10 @@ type QaState = {
   loadTalk: (id: string) => Promise<void>;
   loadPublic: (id: string) => Promise<void>;
   loadPresenter: (id: string) => Promise<void>;
+  loadSlides: (id: string) => Promise<void>;
+  loadAdminSessions: () => Promise<void>;
+  createSession: (payload: { title: string; presenter?: string; description?: string }) => Promise<string>;
+  loadFeedbackSummary: (id: string) => Promise<void>;
   connect: (id: string) => void;
   disconnect: () => void;
   submitQuestion: (id: string, question: string) => Promise<void>;
@@ -46,6 +60,20 @@ export const useQaStore = create<QaState>((set, get) => ({
   },
   async loadPresenter(id) {
     const data = await apiJson<PresenterQaPayload>(`/api/sessions/${id}/qa/presenter.json`); set({ presenterPayload: data });
+  },
+  async loadSlides(id) {
+    const data = await apiJson<SlidesQaPayload>(`/api/sessions/${id}/qa/slides.json`); set({ slidesPayload: data });
+  },
+  async loadAdminSessions() {
+    const data = await apiJson<AdminSessionsResponse>(`/api/admin/sessions`); set({ adminSessions: data });
+  },
+  async createSession(payload) {
+    const data = await postJson<SessionPacket & { operator_link?: string }>(`/api/admin/sessions`, payload);
+    await get().loadAdminSessions().catch(() => {});
+    return data.session_id;
+  },
+  async loadFeedbackSummary(id) {
+    const data = await apiJson<FeedbackSummary>(`/api/admin/talks/${id}/feedback-summary`); set({ feedbackSummary: data });
   },
   connect(id) {
     get().disconnect();

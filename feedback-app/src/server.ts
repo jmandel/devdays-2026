@@ -1578,7 +1578,14 @@ Bun.serve({
   port: PORT,
   routes: {
     "/t/:id": appHtml,
+    "/admin": appHtml,
+    "/admin/dashboard": appHtml,
+    "/admin/login-page": appHtml,
     "/admin/talks/:id": appHtml,
+    "/slides/t/:id/qa": appHtml,
+    "/slides/s/:id/qa": appHtml,
+    "/embed/t/:id/qa": appHtml,
+    "/embed/s/:id/qa": appHtml,
   },
   async fetch(req) {
     const url = new URL(req.url);
@@ -1594,7 +1601,7 @@ Bun.serve({
       return json({ authenticated: !!auth, scope: auth?.scope ?? null, session_id: auth?.session_id ?? null });
     }
 
-    if ((path === "/admin" || path === "/admin/dashboard") && method === "GET") return auth?.scope === "global_admin" ? html(homePage(auth)) : html(lockedConsole("admin"));
+    if ((path === "/admin" || path === "/admin/dashboard") && method === "GET") return auth?.scope === "global_admin" ? html(homePage(auth)) : redirect("/admin/login-page");
 
     if (path === "/admin/login" && method === "POST") {
       const form = await req.formData();
@@ -1635,6 +1642,19 @@ Bun.serve({
       const capToken = await createRoomCapability(id);
       const page = qrPage(id, auth, capToken);
       return page ? html(page) : redirect(`/admin/talks/${id}/qr`);
+    }
+
+    if (path === "/api/admin/sessions" && method === "GET") {
+      if (auth?.scope !== "global_admin") return json({ error: "unauthorized" }, 401);
+      const sessions = db.query<{ id: string; title: string; presenter: string; created_at: number; active: number; qa_state: string; feedback_count: number }, []>(`
+        SELECT s.id, s.title, s.presenter, s.created_at, s.active, s.qa_state, COUNT(f.id) AS feedback_count
+        FROM sessions s
+        LEFT JOIN feedback f ON f.session_id = s.id
+        GROUP BY s.id
+        ORDER BY s.created_at DESC
+        LIMIT 100
+      `).all();
+      return json({ sessions: sessions.map((s) => ({ ...s, active: !!s.active })), totals: { sessions: sessions.length, active: sessions.filter((s) => s.active).length, feedback: sessions.reduce((sum, s) => sum + s.feedback_count, 0) } });
     }
 
     if (path === "/api/admin/sessions" && method === "POST") {
@@ -1850,6 +1870,24 @@ Bun.serve({
       db.query("INSERT INTO feedback (id, session_id, rating, sentiment, comment, tags) VALUES (?, ?, ?, ?, ?, ?)").run(fid, sid, rating, sentiment, comment, tags);
       recordInteraction(sid, key, "feedback", sentiment ?? rating, comment, fid, { rating, sentiment, tags: rawTags });
       return json({ ok: true, feedback_id: fid }, 202, cookieHeaders);
+    }
+
+    const feedbackSummaryMatch = path.match(/^\/api\/admin\/talks\/([a-z0-9]+)\/feedback-summary$/);
+    if (feedbackSummaryMatch && method === "GET") {
+      const sid = feedbackSummaryMatch[1];
+      if (!canManageRoom(auth, sid)) return json({ error: "unauthorized" }, 401);
+      const since = Math.floor(Date.now() / 1000) - 5 * 60;
+      const pulseRows = db.query<{ value: string; c: number }, [string, number]>("SELECT value, COUNT(*) AS c FROM attendee_interactions WHERE session_id = ? AND kind = 'pulse' AND created_at >= ? GROUP BY value").all(sid, since);
+      const ratingRows = db.query<{ rating: number; c: number }, [string]>("SELECT rating, COUNT(*) AS c FROM feedback WHERE session_id = ? AND rating IS NOT NULL GROUP BY rating").all(sid);
+      const comments = db.query<{ id: string; rating: number | null; comment: string | null; tags: string | null; submitted_at: number }, [string]>("SELECT id, rating, comment, tags, submitted_at FROM feedback WHERE session_id = ? AND (comment IS NOT NULL OR tags IS NOT NULL OR rating IS NOT NULL) ORDER BY submitted_at DESC LIMIT 50").all(sid);
+      return json({
+        pulse: { window_seconds: 300, counts: Object.fromEntries(pulseRows.map((r) => [r.value, r.c])), total: pulseRows.reduce((sum, r) => sum + r.c, 0) },
+        session_feedback: {
+          total: db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM feedback WHERE session_id = ?").get(sid)?.c ?? 0,
+          rating_distribution: Object.fromEntries(ratingRows.map((r) => [String(r.rating), r.c])),
+          comments: comments.map((c) => ({ ...c, tags: c.tags ? JSON.parse(c.tags) : [] })),
+        },
+      });
     }
 
     const qaEventsMatch = path.match(/^\/api\/sessions\/([a-z0-9]+)\/qa\/events$/);

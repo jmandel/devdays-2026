@@ -28,6 +28,8 @@ production (`NODE_ENV=production`) the key is required.
 | `bun test test/qa-worker.test.ts` | Q&A worker/domain tests |
 | `bun run load-talks` | Parse `prep/talks.md` into rooms (`smart`, `ktc`, `checkin`, `llms`, `coin`); clears runtime Q&A/feedback state |
 | `bun run load-ai-context` | Clip prep/deck markdown into `sessions.ai_context` |
+| `bun run reset-devdays` | Clear live runtime state, reload DevDays talks, and reload AI context |
+| `bun run reset-devdays -- --all` | Same reset, also clearing sessions/auth/capability links before reload |
 | `bun run cli list\|create\|qa` | Session admin from the terminal |
 
 ## Environment

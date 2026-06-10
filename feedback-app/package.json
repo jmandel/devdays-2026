@@ -9,6 +9,7 @@
     "test": "bun test",
     "load-talks": "bun scripts/load-talks.ts",
     "load-ai-context": "bun scripts/load-ai-context.ts",
+    "reset-devdays": "bun scripts/reset-devdays.ts",
     "cli": "bun scripts/cli.ts"
   },
   "dependencies": {

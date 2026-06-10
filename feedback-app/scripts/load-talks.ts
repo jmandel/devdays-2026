@@ -5,7 +5,7 @@
  *   DB_PATH          SQLite file (default feedback.db)
  *   REPO_ROOT        repo root (default ..)
  *   TALKS_PATH       talks markdown (default $REPO_ROOT/prep/talks.md)
- *   SLIDES_BASE_URL  base URL for deck links (default /decks relative paths under repo pages)
+ *   SLIDES_BASE_URL  base URL for deck links (default canonical DevDays pages URL)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,7 +14,7 @@ import { now } from "../src/util.ts";
 
 const REPO_ROOT = resolve(process.env.REPO_ROOT ?? join(import.meta.dir, "..", ".."));
 const TALKS_PATH = process.env.TALKS_PATH ?? join(REPO_ROOT, "prep", "talks.md");
-const SLIDES_BASE = (process.env.SLIDES_BASE_URL ?? "https://jmandel.github.io/devdays-2026-fable/decks").replace(/\/$/, "");
+const SLIDES_BASE = (process.env.SLIDES_BASE_URL ?? "https://joshuamandel.com/devdays-2026/decks").replace(/\/$/, "");
 
 const KNOWN: { id: string; match: RegExp; deck: string }[] = [
   { id: "smart", match: /SMART Across the Ecosystem/i, deck: "smart-ecosystem" },

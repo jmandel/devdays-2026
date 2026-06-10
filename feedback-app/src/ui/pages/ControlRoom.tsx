@@ -140,9 +140,6 @@ export function ControlRoomPage({ id }: { id: string }) {
           <a className="btn quiet small" href={`/t/${id}`} target="_blank" rel="noreferrer">
             Public page ↗
           </a>
-          <Link className="btn quiet small" to={`/admin/talks/${id}/ai-run`}>
-            AI processing log
-          </Link>
           <a className="btn quiet small" href={`/admin/talks/${id}/export`}>
             Export CSV
           </a>
@@ -176,18 +173,18 @@ export function ControlRoomPage({ id }: { id: string }) {
             <>
               {themes.length > 0 ? (
                 themes.map((t) => <ThemeCard key={t.id} theme={t} onAction={act} />)
+              ) : (presenterQa?.answered_count ?? 0) > 0 ? (
+                <div className="empty">
+                  All themes have been answered.
+                </div>
+              ) : (presenterQa?.raw_pending_count ?? 0) > 0 ? (
+                <div className="empty">
+                  No themes yet. {presenterQa!.raw_pending_count} raw submission{presenterQa!.raw_pending_count === 1 ? "" : "s"} waiting
+                  for synthesis — flip to “Raw questions” to peek.
+                </div>
               ) : (
                 <div className="empty">
-                  No answerable themes yet.
-                  {rawPreview.length > 0 ? (
-                    <>
-                      {" "}
-                      {rawPreview.length} raw submission{rawPreview.length === 1 ? "" : "s"} waiting
-                      for synthesis — flip to “Raw questions” to peek.
-                    </>
-                  ) : (
-                    <> Themes appear as attendees ask questions.</>
-                  )}
+                  Themes appear as attendees ask questions.
                 </div>
               )}
               {(presenterQa?.answered ?? []).length > 0 ? (
@@ -214,6 +211,11 @@ export function ControlRoomPage({ id }: { id: string }) {
                   </div>
                 </details>
               ) : null}
+              <div style={{ marginTop: 12, textAlign: "right" }}>
+                <Link className="small muted" style={{ textDecoration: "underline" }} to={`/admin/talks/${id}/ai-run`}>
+                  AI processing log
+                </Link>
+              </div>
             </>
           ) : rawPreview.length > 0 ? (
             rawPreview.map((q) => (

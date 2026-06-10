@@ -79,10 +79,6 @@ function sessionPublicUrl(sessionId: string) {
   return `${publicBaseUrl()}/t/${sessionId}`;
 }
 
-function qrImageUrl(targetUrl: string, size = 160) {
-  // margin creates the required white quiet zone for reliable scanning.
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=16&data=${encodeURIComponent(targetUrl)}`;
-}
 
 function addColumnIfMissing(table: string, column: string, ddl: string) {
   const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().map((c) => c.name);
@@ -221,6 +217,8 @@ async function sha256RawHex(text: string) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function appShell() { return appHtml as unknown as Response; }
+
 function html(content: string, status = 200) {
   return new Response(content, {
     status,
@@ -256,16 +254,6 @@ function escHtml(s: string) {
     .replace(/"/g, "&quot;");
 }
 
-function starRating(n: number) {
-  return [1, 2, 3, 4, 5].map((i) => `<span style="color:${i <= n ? "#39ff88" : "#315447"}">■</span>`).join("");
-}
-
-function sentimentEmoji(s: string | null) {
-  if (s === "great") return "OK";
-  if (s === "ok") return "MID";
-  if (s === "lost") return "ERR";
-  return "";
-}
 
 type AuthScope = "global_admin" | "room_admin";
 type AuthContext = { id: string; scope: AuthScope; session_id: string | null; expires_at: number } | null;
@@ -408,11 +396,7 @@ function sameOriginOk(req: Request) {
   } catch { return false; }
 }
 
-function lockedConsole(kind: "admin" | "room" = "admin") {
-  const devNote = ADMIN_KEY_IS_DEV_DEFAULT ? `<p class="muted mt-16" style="color:var(--warn)">DEV DEFAULT ACTIVE: ADMIN_KEY is not set. Use operator key <strong>devdays-admin</strong> locally only.</p>` : "";
-  if (kind === "room") return layout("Room locked", `<main class="container"><div class="card text-center" style="margin-top:54px"><p class="eyebrow">ROOM CONSOLE LOCKED</p><h1 style="color:var(--ink);text-transform:uppercase">Ask the organizer for this room's operator link.</h1><p class="muted mt-16">Management access is room-scoped and capability based.</p></div></main>`, false);
-  return layout("Admin locked", `<main class="container"><div class="card" style="max-width:520px;margin:64px auto"><p class="eyebrow">ADMIN CONSOLE LOCKED</p><h1 style="color:var(--ink);margin-bottom:16px">enter operator key</h1><form method="POST" action="/admin/login"><div class="field"><label>operator key</label><input type="password" name="key" autocomplete="current-password" autofocus required /></div><button class="btn btn-primary" style="width:100%">unlock console</button></form>${devNote}</div></main>`, false);
-}
+function lockedConsole(_kind: "admin" | "room" = "admin") { return "<!doctype html><html><body><div id=\"root\"></div><script type=\"module\" src=\"/src/ui/main.tsx\"></script></body></html>"; }
 
 function sessionPacket(session: Pick<SessionRow, "id" | "qa_state" | "qa_mode" | "qa_display_mode" | "qa_enabled">) {
   return {
@@ -660,624 +644,6 @@ function recordModeratorAction(sessionId: string, questionId: string | null, act
 
 // ─── CSS ──────────────────────────────────────────────────────────────────────
 
-const BASE_CSS = `
-:root {
-  --bg: #f6fbf8;
-  --panel: #ffffff;
-  --panel-2: #f1f8f5;
-  --panel-3: #e8f3ef;
-  --ink: #10251f;
-  --text: #29433b;
-  --muted: #6b817a;
-  --line: #d8e8e2;
-  --line-hot: #20c77a;
-  --accent: #2f8fcb;
-  --warn: #ffcc00;
-  --danger: #d6455d;
-  --success: #20c77a;
-  --shadow: 0 16px 42px rgba(27,68,54,.10);
-  --shadow-sm: 0 8px 24px rgba(27,68,54,.08);
-  --radius: 14px;
-}
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
-body {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: radial-gradient(circle at 12% 0%, rgba(32,199,122,.14), transparent 28rem), radial-gradient(circle at 88% 8%, rgba(47,143,203,.10), transparent 26rem), var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-}
-a { color: inherit; }
-.container { max-width: 1180px; margin: 0 auto; padding: 28px 22px 72px; }
-.topbar { position: sticky; top: 0; z-index: 10; background: rgba(5,7,10,.92); color: var(--ink); border-bottom: 1px solid var(--line); box-shadow:0 0 24px rgba(50,255,154,.08); backdrop-filter: blur(12px); }
-.nav-inner { max-width: 1180px; margin: 0 auto; padding: 14px 22px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
-.brand { display:flex; align-items:center; gap:12px; text-decoration:none; }
-.logo { width:44px; height:44px; position:relative; display:block; border-radius:var(--radius); background:#fff; border:1px solid var(--line-hot); box-shadow:0 3px 10px rgba(27,68,54,.10); overflow:hidden; }
-.logo:before, .logo:after { content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); background:var(--line-hot); box-shadow:0 6px 16px rgba(32,199,122,.18); }
-.logo:before { width:24px; height:5px; }
-.logo:after { width:5px; height:24px; }
-.logo i { position:absolute; inset:5px; border:1px solid rgba(0,229,255,.22); border-radius:3px; }
-.brand strong { display:block; font-size:1rem; letter-spacing:.02em;  color:var(--ink); }
-.brand-copy { display:block; }
-.brand-copy span { display:block; font-size:.72rem; color:var(--muted); margin-top:2px; }
-.nav-actions { display:flex; align-items:center; gap:10px; }
-.hero-grid { display:grid; grid-template-columns: minmax(0, .95fr) minmax(380px, 1.05fr); gap:32px; align-items:start; padding-top:42px; }
-.hero-copy { padding:22px 0; }
-.eyebrow { color: var(--line-hot);  letter-spacing:.08em; font-weight:900; font-size:.75rem; margin-bottom:12px; text-shadow:none; }
-.hero-title { color:var(--ink); font-size: clamp(3rem, 6.4vw, 6rem); line-height:.92; letter-spacing:-.065em; max-width:720px;  }
-.hero-title:before { content:''; display:block; width:64px; height:4px; margin-bottom:18px; background:var(--line-hot); box-shadow:none; }
-.lede { color:var(--text); font-size:clamp(1rem, 1.35vw, 1.14rem); line-height:1.55; max-width:650px; margin-top:22px; }
-
-@keyframes blink { 50% { opacity:0; } }
-.feature-row { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:12px; margin-top:26px; max-width:650px; }
-.feature, .stat { background:linear-gradient(180deg,var(--panel),var(--panel-2)); border:1px solid var(--line); border-radius:var(--radius); padding:14px; box-shadow:var(--shadow-sm); }
-.feature b { display:block; color:var(--ink); font-size:.9rem;  }
-
-.feature span { display:block; color:var(--muted); font-size:.8rem; margin-top:6px; line-height:1.35; }
-.stat-strip { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:20px; max-width:650px; }
-.stat .num { font-size:2rem; font-weight:900; color:var(--line-hot); letter-spacing:-.04em; text-shadow:none; }
-.stat .label { color:var(--muted); font-size:.76rem; font-weight:800;  }
-.card { background:linear-gradient(180deg, rgba(255,255,255,.98), rgba(241,248,245,.98)); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:28px; }
-.create-card { position:relative; overflow:hidden; }
-.create-card:before { content:""; position:absolute; inset:0 0 auto 0; height:2px; background:linear-gradient(90deg,var(--line-hot),var(--accent),transparent); box-shadow:none; }
-.card h2 { font-size:1.25rem; letter-spacing:-.02em; margin-bottom:8px; color:var(--ink);  }
-
-.card-subtitle { color:var(--muted); margin-bottom:20px; line-height:1.45; }
-.btn, button { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:13px 20px; border-radius:var(--radius); font-size:.92rem; font-weight:900; cursor:pointer; border:none; transition: transform .12s, box-shadow .12s, background .12s, border-color .12s; text-decoration:none; line-height:1; white-space:nowrap;  letter-spacing:.01em; font-family:inherit; }
-.btn:hover, button:hover { transform: translateY(-1px); }
-.btn-primary { background:var(--line-hot); color:#062216; box-shadow:0 10px 22px rgba(32,199,122,.20); border:1px solid var(--line-hot); }
-.btn-primary:hover { background:#39d88f; box-shadow:0 12px 28px rgba(32,199,122,.24); }
-.btn-sm { padding:10px 14px; font-size:.78rem; }
-.btn-outline { background:transparent; border:1px solid var(--line-hot); color:var(--line-hot); box-shadow:none; }
-.btn-outline:hover { background:rgba(50,255,154,.08); }
-.btn-ghost { background:transparent; color:var(--ink); border:1px solid #cfe2dc; box-shadow:none; }
-.btn-success { background:var(--success); color:#062216; }
-.btn-danger { background:var(--danger); color:#fff; }
-input[type=text], input[type=url], input[type=password], textarea, select { width:100%; padding:14px 16px; border:1px solid #cfe2dc; border-radius:var(--radius); font-size:.95rem; background:#fff; color:var(--ink); transition:border .15s, box-shadow .15s; font-family:inherit; }
-input::placeholder, textarea::placeholder { color:#51655f; }
-input:focus, textarea:focus { outline:none; border-color:var(--line-hot); box-shadow:0 0 0 3px rgba(32,199,122,.14); }
-textarea { resize:vertical; min-height:88px; }
-.field { margin-bottom:16px; }
-.field label { display:block; font-weight:900; margin-bottom:7px; font-size:.78rem; color:var(--muted);  letter-spacing:.07em; }
-.grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-.muted { color:var(--muted); }
-.mt-8 { margin-top:8px; } .mt-16 { margin-top:16px; } .mt-24 { margin-top:24px; }
-.text-center { text-align:center; }
-.pill { display:inline-flex; align-items:center; gap:5px; padding:5px 10px; border-radius:var(--radius); font-size:.68rem; font-weight:900;  letter-spacing:.08em; border:1px solid currentColor; }
-.pill-active { background:rgba(57,255,136,.08); color:var(--success); }
-.pill-closed { background:rgba(255,56,100,.08); color:var(--danger); }
-.pill-warn { background:rgba(255,204,0,.08); color:var(--warn); }
-.qa-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-.qa-switch { position:relative; display:inline-flex; align-items:center; width:236px; min-width:236px; height:42px; padding:3px; border:1px solid var(--line-hot); border-radius:999px; background:#fff; color:var(--line-hot); box-shadow:0 3px 10px rgba(27,68,54,.08); overflow:hidden; cursor:pointer; }
-.qa-switch::before { content:""; position:absolute; top:3px; bottom:3px; width:112px; border-radius:999px; background:var(--line-hot); box-shadow:0 3px 10px rgba(27,68,54,.10); transition:left .16s ease; }
-.qa-switch-open::before { left:3px; }
-.qa-switch-paused::before { left:119px; background:rgba(255,204,0,.95); box-shadow:0 3px 10px rgba(183,121,31,.10); }
-.qa-switch button { position:relative; z-index:1; flex:1 1 0; height:34px; padding:0; border:0; border-radius:999px; background:transparent; color:var(--muted); box-shadow:none; font-size:.75rem; font-weight:950; letter-spacing:.03em; }
-.qa-switch button:hover { transform:none; background:transparent; }
-.qa-switch button[aria-pressed="true"] { color:#062216; }
-.qa-switch button:disabled { cursor:wait; opacity:.72; }
-.qa-status { display:inline-flex; align-items:center; min-height:37px; min-width:246px; padding:7px 0; font-size:.78rem; font-weight:900; letter-spacing:.02em; }
-.qa-status::before { content:""; width:9px; height:9px; flex:0 0 9px; border-radius:999px; margin-right:8px; background:currentColor; box-shadow:none; }
-.qa-grid { display:grid; grid-template-columns: minmax(0,1fr) minmax(280px,.45fr); gap:16px; align-items:start; }
-.qa-item { border:1px solid var(--line); background:#fff; border-radius:var(--radius); padding:14px; margin-top:10px; }
-.qa-item strong { color:var(--ink); }
-.qa-meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; color:var(--muted); font-size:.78rem; }
-.qa-vote { padding:8px 10px; font-size:.72rem; }
-.qa-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
-.sessions-head { display:flex; justify-content:space-between; align-items:end; gap:16px; margin:34px 0 14px; }
-.sessions-head h2 { color:var(--ink); font-size:1.55rem; letter-spacing:-.03em;  }
-.sessions-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(330px,1fr)); gap:16px; }
-.session-card { padding:0; overflow:hidden; }
-.session-top { padding:22px 22px 16px; display:flex; justify-content:space-between; gap:14px; align-items:flex-start; }
-.session-title { font-size:1.08rem; line-height:1.25; letter-spacing:-.015em; color:var(--ink);  }
-.session-meta { color:var(--muted); margin-top:8px; font-size:.84rem; }
-.session-actions { border-top:1px solid var(--line); padding:16px 22px 20px; display:flex; gap:10px; flex-wrap:wrap; }
-.qr-mini { width:82px; min-width:82px; height:82px; border-radius:var(--radius); background:#fff; display:grid; place-items:center; border:1px solid var(--line-hot); overflow:hidden; padding:10px; filter:none; }
-.qr-mini img { width:62px; height:62px; display:block; }
-.empty-state { text-align:center; padding:36px; color:var(--muted); }
-.admin-shell { max-width:1180px; margin:0 auto; padding:28px 22px 72px; }
-.admin-hero { display:grid; grid-template-columns:1fr auto; gap:20px; align-items:start; }
-.kpi-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:16px; margin:20px 0; }
-.kpi { text-align:center; }
-.kpi-value { font-size:2.4rem; font-weight:950; color:var(--line-hot); letter-spacing:-.06em; text-shadow:none; }
-.table-card { overflow:hidden; padding:0; }
-table { width:100%; border-collapse:collapse; font-size:.86rem; }
-th { background:#eef6f2; color:var(--line-hot); text-align:left; padding:12px 16px; font-size:.72rem;  letter-spacing:.09em; }
-td { padding:14px 16px; border-top:1px solid var(--line); vertical-align:top; }
-.chip { display:inline-flex; align-items:center; border:1px solid #cfe2dc; border-radius:var(--radius); padding:8px 12px; font-size:.8rem; font-weight:900; cursor:pointer; transition:all .15s; user-select:none; margin:4px; background:#fff; color:var(--text);  }
-.chip:hover, .chip.selected { background:var(--line-hot); color:#062216; border-color:var(--line-hot); box-shadow:0 8px 20px rgba(32,199,122,.14); }
-.phone-bg { min-height:100vh; display:grid; place-items:start center; padding:22px 16px; background:radial-gradient(circle at top, rgba(32,199,122,.12), transparent 28rem), var(--bg); background-size:28px 28px,28px 28px,auto,auto; }
-.phone-card { width:min(100%,620px); }
-.feedback-title { text-align:left; margin:8px 0 22px; border-left:4px solid var(--line-hot); padding-left:16px; }
-.feedback-title h1 { font-size:clamp(2rem,7vw,3rem); line-height:1; letter-spacing:-.06em; color:var(--ink);  }
-.star { font-size:1.25rem !important; user-select:none; transition:all .1s; display:block; border:1px solid #cfe2dc; padding:14px 16px; min-width:70px; text-align:center; color:var(--muted); background:#fff; }
-.star:hover { border-color:var(--line-hot); color:var(--line-hot); }
-.sentiment-btn { text-align:center; padding:16px 22px; border-radius:var(--radius); border:1px solid #cfe2dc; transition:all .15s; min-width:118px; background:#fff;  }
-@media (max-width: 860px) { .hero-grid, .admin-hero, .qa-grid { grid-template-columns:1fr; } .feature-row, .stat-strip, .kpi-grid, .qa-tabs { grid-template-columns:1fr; } .hero-copy { padding-top:6px; } .hero-title { font-size:3.2rem; } .nav-inner { padding:12px 16px; } .container, .admin-shell { padding-left:16px; padding-right:16px; } }
-@media (max-width: 560px) { .grid-2, .sessions-grid { grid-template-columns:1fr; } .card { padding:22px; } .session-top { flex-direction:column; } .qr-mini { width:100%; height:170px; } .qr-mini img { width:128px; height:128px; } .nav-actions .btn-ghost { display:none; } .star { min-width:50px; padding:12px 8px; } }
-`;
-
-function layout(title: string, body: string, showNav = true, auth: AuthContext = null) {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${title} — DevDays Feedback</title>
-  <style>${BASE_CSS}</style>
-</head>
-<body>
-${showNav ? `<header class="topbar">
-  <div class="nav-inner">
-    <a class="brand" href="/">
-      <span class="logo" aria-hidden="true"><i></i></span>
-      <span class="brand-copy"><strong>DevDays Feedback</strong><span>Talk Q&A and audience signals</span></span>
-    </a>
-    <nav class="nav-actions">
-      <a href="/#sessions" class="btn btn-ghost btn-sm">Sessions</a>
-      ${auth?.scope === "global_admin" ? `<a href="/#create" class="btn btn-ghost btn-sm">Create room</a>` : ""}
-      ${auth ? `<form method="POST" action="/logout" style="display:inline"><button class="btn btn-ghost btn-sm">logout</button></form>` : ""}
-    </nav>
-  </div>
-</header>` : ""}
-${body}
-</body>
-</html>`;
-}
-
-
-function accessPanel(sessionId: string, auth: AuthContext, freshToken: string | null = null) {
-  if (auth?.scope !== "global_admin") {
-    return `<div class="card mt-16"><h2>Room operator access</h2><p class="muted">Access delegated for this room only. Capability rotation is organizer-only.</p></div>`;
-  }
-  const active = db.query<{ id: string; created_at: number; claimed_at: number | null }, [string]>("SELECT id, created_at, claimed_at FROM room_capabilities WHERE session_id = ? AND active = 1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1").get(sessionId);
-  const opUrl = freshToken ? operatorLink(freshToken) : "";
-  const presenterMessage = freshToken ? presenterPacket(sessionId, freshToken) : "";
-  return `<div class="card mt-16">
-    <h2>Room operator access</h2>
-    <p class="muted">Operator links are shown only immediately after generation. ${active ? `Active link created ${new Date(active.created_at * 1000).toLocaleString()}${active.claimed_at ? `; last claimed ${new Date(active.claimed_at * 1000).toLocaleString()}` : ""}` : "No active operator link"}</p>
-    ${freshToken ? `<div class="mt-16"><label class="muted" style="display:block;margin-bottom:6px;font-weight:900">operator link</label><input type="text" readonly value="${escHtml(opUrl)}" onclick="this.select()" /></div>
-    <div class="mt-16"><label class="muted" style="display:block;margin-bottom:6px;font-weight:900">presenter message</label><textarea readonly rows="7" onclick="this.select()">${escHtml(presenterMessage)}</textarea></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap" class="mt-16"><button type="button" class="btn btn-primary btn-sm" data-copy="${escHtml(presenterMessage)}">copy presenter message</button><button type="button" class="btn btn-outline btn-sm" data-copy="${escHtml(opUrl)}">copy operator link</button></div>` : `<p class="muted mt-16">Regenerate to reveal a new copyable operator link.</p>`}
-    <div style="display:flex;gap:8px;flex-wrap:wrap" class="mt-16">
-      <form method="POST" action="/admin/talks/${sessionId}/capability/regenerate"><button class="btn btn-primary btn-sm">${active ? "Regenerate operator link" : "Generate operator link"}</button></form>
-      ${active ? `<form method="POST" action="/admin/talks/${sessionId}/capability/revoke"><button class="btn btn-danger btn-sm">revoke link</button></form>` : ""}
-    </div>
-    <script>document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-copy]');if(!b)return;navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy);b.textContent='copied';setTimeout(()=>b.textContent=b.dataset.copy.startsWith('Your session')?'copy presenter message':'copy operator link',1200);});</script>
-  </div>`;
-}
-
-// ─── Pages ────────────────────────────────────────────────────────────────────
-
-function publicLandingPage() {
-  const rooms = db.query<{ id: string; title: string; presenter: string; description: string; slides_url: string }, []>("SELECT id,title,presenter,description,slides_url FROM sessions WHERE active = 1 ORDER BY CASE id WHEN 'smart' THEN 1 WHEN 'ktc' THEN 2 WHEN 'checkin' THEN 3 WHEN 'llms' THEN 4 WHEN 'coin' THEN 5 ELSE 9 END, title").all();
-  const cards = rooms.map((s) => `<div class="qa-item room-card"><div class="room-card-main"><strong class="room-card-title">${escHtml(s.title)}</strong>${s.presenter ? `<p class="muted mt-8">${escHtml(s.presenter)}</p>` : ""}${s.description ? `<p class="muted mt-8">${escHtml(s.description)}</p>` : ""}<p class="muted mt-8">Room: <code>${escHtml(s.id)}</code></p></div><div class="room-card-action"><a class="btn btn-primary btn-sm" href="/t/${s.id}">Open room</a></div></div>`).join("");
-  return layout("DevDays rooms", `<main class="container"><section class="card public-rooms"><p class="eyebrow">DevDays Feedback</p><h1 style="color:var(--ink);font-size:2rem">Choose a room</h1><p class="muted mt-8">Open the public page for slides, live Q&A, and private feedback.</p>${cards || `<p class="muted mt-16">No public rooms are open right now.</p>`}<div class="mt-24"><a class="btn btn-ghost btn-sm" href="/admin">Operator login</a></div></section></main><style>.room-card{display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:16px;align-items:start;margin-top:12px}.room-card-main{min-width:0}.room-card-title{display:block;font-size:1.02rem;line-height:1.28;font-weight:760;max-width:100%}.room-card-action{display:flex;justify-content:flex-end;align-items:start}.room-card-action .btn{min-width:132px}@media(max-width:720px){.room-card{grid-template-columns:1fr}.room-card-action{justify-content:flex-start}.room-card-action .btn{width:100%;max-width:220px}}</style>`, false);
-}
-
-function homePage(auth: AuthContext) {
-  const sessions = db.query<
-    { id: string; title: string; presenter: string; created_at: number; active: number; qa_state: QaState; count: number },
-    []
-  >(`
-    SELECT s.*, COUNT(f.id) as count
-    FROM sessions s
-    LEFT JOIN feedback f ON f.session_id = s.id
-    GROUP BY s.id
-    ORDER BY s.created_at DESC
-    LIMIT 20
-  `).all();
-
-  const totalResponses = sessions.reduce((sum, s) => sum + s.count, 0);
-  const liveSessions = sessions.filter((s) => s.active).length;
-
-  const sessionList = sessions.length === 0
-    ? `<div class="card empty-state"><div style="font-size:2rem;color:var(--line-hot)">∅</div><h3 style="margin:10px 0;color:var(--ink)">No talks yet</h3><p>Create or load talks to begin collecting feedback.</p></div>`
-    : sessions.map((s) => {
-      const sessionUrl = sessionPublicUrl(s.id);
-      return `<article class="card session-card">
-        <div class="session-top">
-          <div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-              <span class="pill ${s.active ? "pill-active" : "pill-closed"}">${s.active ? "● live" : "closed"}</span>
-              <span class="pill" style="background:#ede9fe;color:#5b21b6">${s.count} signal${s.count !== 1 ? "s" : ""}</span>
-            </div>
-            <h3 class="session-title">${escHtml(s.title)}</h3>
-            ${s.presenter ? `<p class="session-meta">presenter=${escHtml(s.presenter)}</p>` : ""}
-            <p class="session-meta"><strong>attendee:</strong> <a href="/t/${s.id}" target="_blank">${escHtml(new URL(sessionUrl).pathname)}</a></p>
-          </div>
-        </div>
-        <div class="session-actions">
-          <a href="/admin/talks/${s.id}" class="btn btn-primary btn-sm">open control room</a>
-        </div>
-      </article>`;
-    }).join("");
-
-  const body = `<main class="container">
-  <section class="hero-grid">
-    <div class="hero-copy">
-      <p class="eyebrow">Organizer dashboard</p>
-      <h1 class="hero-title">Talk feedback, in one place.</h1>
-      <p class="lede">Share one short talk link for slides, live Q&A, and audience feedback during the session.</p>
-      <div class="feature-row">
-        <div class="feature"><b>Talk pages</b><span>QR codes open the attendee page for each talk.</span></div>
-        <div class="feature"><b>Live signals</b><span>Audience questions, votes, reactions, and comments arrive in real time.</span></div>
-        <div class="feature"><b>Exportable</b><span>SQLite storage with CSV export for organizers.</span></div>
-      </div>
-      <div class="stat-strip" aria-label="Conference stats">
-        <div class="stat"><div class="num">${sessions.length}</div><div class="label">talks</div></div>
-        <div class="stat"><div class="num">${liveSessions}</div><div class="label">open</div></div>
-        <div class="stat"><div class="num">${totalResponses}</div><div class="label">signals</div></div>
-      </div>
-    </div>
-
-    ${auth?.scope === "global_admin" ? `<div class="card create-card" id="create">
-      <p class="eyebrow" style="margin-bottom:8px">Add talk</p>
-      <h2>Create talk page</h2>
-      <p class="card-subtitle">Create a public attendee page with slides, Q&A, feedback, and QR sharing.</p>
-      <form method="POST" action="/sessions">
-        <div class="field">
-          <label>talk title *</label>
-          <input type="text" name="title" required placeholder="e.g. Building APIs People Love" />
-        </div>
-        <div class="grid-2">
-          <div class="field">
-            <label>presenter / operator</label>
-            <input type="text" name="presenter" placeholder="e.g. Jane Smith" />
-          </div>
-          <div class="field">
-            <label>time / room</label>
-            <input type="text" name="description" placeholder="e.g. Main stage, 2:30 PM" />
-          </div>
-        </div>
-        <button type="submit" class="btn btn-primary" style="width:100%;padding:16px;font-size:1.05rem">create talk</button>
-      </form>
-    </div>` : `<div class="card create-card"><p class="eyebrow">admin access required</p><h2>Console locked</h2><p class="card-subtitle">Talk management is restricted. Unlock with the organizer key.</p><a href="/admin" class="btn btn-primary" style="width:100%">unlock admin console</a></div>`}
-  </section>
-
-  <section id="sessions">
-    <div class="sessions-head">
-      <div>
-        <p class="eyebrow" style="margin-bottom:6px">Conference</p>
-        <h2>Talks</h2>
-      </div>
-      <a class="btn btn-outline btn-sm" href="/admin/dashboard">Refresh</a>
-    </div>
-    <div class="sessions-grid">${sessionList}</div>
-  </section>
-</main>`;
-  return layout("Home", body, true, auth);
-}
-
-function adminSessionPage(sessionId: string, auth: AuthContext, freshToken: string | null = null) {
-  const session = db.query<
-    SessionRow,
-    [string]
-  >("SELECT * FROM sessions WHERE id = ?").get(sessionId);
-
-  if (!session) return null;
-
-  const feedbacks = db.query<
-    { id: string; rating: number; sentiment: string; comment: string; tags: string; submitted_at: number },
-    [string]
-  >("SELECT * FROM feedback WHERE session_id = ? ORDER BY submitted_at DESC").all(sessionId);
-
-  const total = feedbacks.length;
-  const withRating = feedbacks.filter((f) => f.rating != null);
-  const avgRating = withRating.length
-    ? (withRating.reduce((a, f) => a + f.rating, 0) / withRating.length).toFixed(1)
-    : null;
-
-  const sentimentCounts: Record<string, number> = {};
-  feedbacks.forEach((f) => {
-    if (f.sentiment) sentimentCounts[f.sentiment] = (sentimentCounts[f.sentiment] ?? 0) + 1;
-  });
-
-  const sessionUrl = sessionPublicUrl(session.id);
-  const questionRows = publicQuestions(session.id, true);
-  const activeQuestions = questionRows.filter((q) => q.status !== "answered" && q.status !== "hidden");
-  const leadThemes = activeQuestions.slice(0, 3);
-  const otherQuestions = activeQuestions.slice(3, 10);
-  const answeredQuestions = questionRows.filter((q) => q.status === "answered").length;
-  const sourceCount = (questionId: string) => db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM qa_question_submissions WHERE question_id = ?").get(questionId)?.c ?? 1;
-
-  const qaIsOpen = session.qa_state === "open";
-  const qaStateLabel = qaIsOpen ? "Accepting audience questions" : "Not accepting new questions";
-  const qaStateClass = qaIsOpen ? "pill-active" : "pill-warn";
-
-  const questionActions = (q: QaQuestionRow) => `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-    ${q.status !== "pinned" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/pin"><button class="btn btn-outline btn-sm">pin</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/unpin"><button class="btn btn-outline btn-sm">unpin</button></form>`}
-    <form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/answer"><button class="btn btn-success btn-sm">answered</button></form>
-    <form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/hide"><button class="btn btn-danger btn-sm">hide</button></form>
-  </div>`;
-
-  const compactQuestion = (q: QaQuestionRow) => `<div class="qa-item"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><strong>${escHtml(q.display_text)}</strong><span class="pill ${q.status === "live" || q.status === "pinned" ? "pill-active" : q.status === "answered" ? "pill-warn" : "pill-closed"}">${q.status}</span></div><div class="qa-meta"><span>score=${q.support_count}</span><span>${new Date(q.created_at * 1000).toLocaleTimeString()}</span></div>${questionActions(q)}</div>`;
-
-  const feedbackRows = feedbacks.slice(0, 100).map((f) => {
-    const tags = f.tags ? JSON.parse(f.tags) as string[] : [];
-    return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:10px 14px;white-space:nowrap">${new Date(f.submitted_at * 1000).toLocaleTimeString()}</td>
-      <td style="padding:10px 14px">${f.rating ? starRating(f.rating) : "—"}</td>
-      <td style="padding:10px 14px">${sentimentEmoji(f.sentiment)}</td>
-      <td style="padding:10px 14px">${tags.length ? tags.map((t) => `<span class="chip" style="font-size:0.75rem;padding:3px 9px;margin:2px">${escHtml(t)}</span>`).join("") : ""}</td>
-      <td style="padding:10px 14px;max-width:240px;word-break:break-word">${escHtml(f.comment ?? "")}</td>
-    </tr>`;
-  }).join("");
-
-  const body = `<div class="admin-shell">
-  <div class="card admin-hero">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
-      <div>
-        <p class="muted" style="font-size:0.8rem;letter-spacing:.05em">Session</p>
-        <h1 style="font-size:1.6rem;font-weight:800;line-height:1.2;margin-bottom:4px">${escHtml(session.title)}</h1>
-        ${session.presenter ? `<p class="muted">presenter / operator: ${escHtml(session.presenter)}</p>` : ""}
-        ${session.description ? `<p class="muted">${escHtml(session.description)}</p>` : ""}
-        <span class="pill ${session.active ? "pill-active" : "pill-closed"}" style="margin-top:6px">${session.active ? "open" : "closed"}</span>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <a href="/t/${session.id}" class="btn btn-primary btn-sm" target="_blank">view attendee page</a>
-        ${session.slides_url ? `<a href="${escHtml(session.slides_url)}" class="btn btn-outline btn-sm" target="_blank" rel="noopener">open slides</a>` : ""}
-        <a href="/admin/talks/${session.id}/export" class="btn btn-sm btn-outline">export CSV</a>
-        <form method="POST" action="/admin/talks/${session.id}/toggle" style="display:inline">
-          <button type="submit" class="btn btn-sm ${session.active ? "btn-danger" : "btn-success"}">
-            ${session.active ? "Close public page" : "Reopen public page"}
-          </button>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <div class="card" id="share">
-    <p class="eyebrow" style="margin-bottom:8px">Share</p>
-    <h2>Audience link and QR</h2>
-    <p class="muted mt-8">Use this one public link for slides, questions, and feedback. This is safe to show on screen.</p>
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;margin-top:16px">
-      <div>
-        <label class="muted" style="display:block;margin-bottom:6px;font-weight:900">Attendee page</label>
-        <input type="text" readonly value="${escHtml(sessionUrl)}" onclick="this.select()" />
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-          <a href="/t/${session.id}" class="btn btn-primary btn-sm" target="_blank">open attendee page</a>
-          <button type="button" class="btn btn-outline btn-sm" data-copy="${escHtml(sessionUrl)}">copy link</button>
-        </div>
-      </div>
-      <a class="qr-mini" href="/admin/talks/${session.id}/qr" title="Open large QR page" style="width:132px;height:132px;text-decoration:none"><img src="${qrImageUrl(sessionUrl, 220)}" alt="QR code" style="width:110px;height:110px"><span class="muted" style="position:absolute;left:-9999px">Open large QR page</span></a>
-    </div>
-  </div>
-
-  <div class="kpi-grid">
-    <div class="card kpi" style="padding:20px">
-      <div class="kpi-value">${total}</div>
-      <div class="muted">signals</div>
-    </div>
-    <div class="card kpi" style="padding:20px">
-      <div class="kpi-value">${avgRating ?? "—"}</div>
-      <div class="muted">avg rating${withRating.length > 0 ? ` (${withRating.length} rated)` : ""}</div>
-    </div>
-  </div>
-
-  ${Object.keys(sentimentCounts).length > 0 ? `
-  <div class="card" style="padding:16px 20px">
-    <h2 style="margin-bottom:12px">clarity breakdown</h2>
-    <div style="display:flex;gap:20px;flex-wrap:wrap">
-      ${Object.entries(sentimentCounts).map(([k, v]) => `
-        <div style="text-align:center">
-          <div style="font-size:2rem">${sentimentEmoji(k)}</div>
-          <div style="font-weight:700">${v}</div>
-          <div class="muted" style="font-size:0.8rem">${k}</div>
-        </div>
-      `).join("")}
-    </div>
-  </div>` : ""}
-
-  <div class="card" id="questions">
-    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
-      <div><p class="eyebrow" style="margin-bottom:8px">Run Q&A</p><h2>Synthesized presenter themes</h2><p class="muted">Presenter-ready themes synthesized from public Q&A submissions, with votes and repeated themes bubbled up.</p></div>
-      <div class="qa-toolbar">
-        <div class="qa-status ${qaStateClass}" data-qa-status>${qaStateLabel}</div>
-        ${qaSwitch(session.id, qaIsOpen)}
-        <a class="btn btn-outline btn-sm" href="/slides/s/${session.id}/qa" target="_blank">Open projector Q&A</a>
-        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}/ai-run" target="_blank" rel="noopener">AI processing log</a>
-      </div>
-    </div>
-
-    <div data-admin-themes>
-      <div class="mt-16" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
-        ${leadThemes.length ? leadThemes.map((q, idx) => `<div class="qa-item" style="border-color:${idx === 0 ? "var(--line-hot)" : "var(--line)"};box-shadow:${idx === 0 ? "0 0 24px rgba(50,255,154,.10)" : "none"};margin-top:0">
-          <div class="muted" style="font-size:.78rem;font-weight:900;margin-bottom:8px">THEME ${idx + 1}</div>
-          <strong style="font-size:1.05rem;color:var(--ink)">${escHtml(q.display_text)}</strong>
-          <div class="qa-meta"><span>${sourceCount(q.id)} source${sourceCount(q.id) === 1 ? "" : "s"}</span><span>score=${q.support_count}</span><span>${escHtml(q.status)}</span></div>
-          ${questionActions(q)}
-        </div>`).join("") : `<div class="qa-item mt-16"><strong>No audience themes yet.</strong><p class="muted mt-8">When attendees ask, submissions will be cleaned up, merged, and shown here as presenter-ready questions.</p></div>`}
-      </div>
-
-      <div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px">
-        <h2 style="font-size:1.05rem">More presenter-ready questions</h2>
-        ${otherQuestions.length ? otherQuestions.map(compactQuestion).join("") : `<p class="muted mt-8">No other live questions.</p>`}
-        ${answeredQuestions ? `<p class="muted mt-16">${answeredQuestions} answered question${answeredQuestions === 1 ? "" : "s"} hidden from this priority view.</p>` : ""}
-      </div>
-    </div>
-  </div>
-
-  ${total > 0 ? `
-  <div class="card table-card" id="feedback" style="overflow-x:auto">
-    <div style="padding:16px 20px 0"><p class="eyebrow" style="margin-bottom:8px">Feedback</p><h2>Live signals and comments</h2><p class="muted mt-8">Private audience feedback for the presenter/organizer. Questions are managed separately above.</p></div>
-    <table style="width:100%;border-collapse:collapse;font-size:0.875rem">
-      <thead>
-        <tr style="background:var(--bg);border-bottom:2px solid var(--border)">
-          <th style="padding:10px 14px;text-align:left">Time</th>
-          <th style="padding:10px 14px;text-align:left">Rating</th>
-          <th style="padding:10px 14px;text-align:left">Feel</th>
-          <th style="padding:10px 14px;text-align:left">Tags</th>
-          <th style="padding:10px 14px;text-align:left">Comment</th>
-        </tr>
-      </thead>
-      <tbody>${feedbackRows}</tbody>
-    </table>
-  </div>` : `<div class="card text-center" id="feedback"><p class="eyebrow" style="margin-bottom:8px">Feedback</p><h2>Live signals and comments</h2><p class="muted mt-8">No feedback yet. Share the attendee page and invite people to send signals any time.</p></div>`}
-
-  <div id="access">${accessPanel(session.id, auth, freshToken)}</div>
-</div>
-${qaToggleScript()}`;
-
-  return layout(`Admin: ${session.title}`, body, true, auth);
-}
-
-function qaAdminPage(sessionId: string, auth: AuthContext) {
-  const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
-  if (!session) return null;
-  processQaFallback(sessionId, 50);
-  const counts = db.query<{ status: string; c: number }, [string]>("SELECT status, COUNT(*) AS c FROM qa_questions WHERE session_id = ? GROUP BY status").all(sessionId);
-  const count = (status: string) => counts.find((c) => c.status === status)?.c ?? 0;
-  const rows = db.query<QaQuestionRow, [string]>("SELECT * FROM qa_questions WHERE session_id = ? ORDER BY pinned DESC, status='pinned' DESC, status='live' DESC, priority DESC, support_count DESC, created_at ASC").all(sessionId);
-  const pending = db.query<{ id: string; raw_text: string; status: string; submitted_at: number }, [string]>("SELECT id, raw_text, status, submitted_at FROM qa_question_submissions WHERE session_id = ? AND status IN ('pending','held','rejected') ORDER BY submitted_at DESC LIMIT 50").all(sessionId);
-  const runs = db.query<{ id: string; status: string; started_at: number; finished_at: number | null; summary: string | null; error: string | null }, [string]>("SELECT id, status, started_at, finished_at, summary, error FROM qa_agent_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT 8").all(sessionId);
-  const questionCard = (q: QaQuestionRow) => `<div class="qa-item">
-    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><strong>${escHtml(q.display_text)}</strong><span class="pill ${q.status === "live" || q.status === "pinned" ? "pill-active" : q.status === "held" ? "pill-warn" : "pill-closed"}">${q.status}</span></div>
-    <div class="qa-meta"><span>support=${q.support_count}</span><span>priority=${q.priority}</span><span>created=${new Date(q.created_at * 1000).toLocaleTimeString()}</span></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-      ${q.status !== "pinned" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/pin"><button class="btn btn-outline btn-sm">pin</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/unpin"><button class="btn btn-outline btn-sm">unpin</button></form>`}
-      ${q.status !== "answered" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/answer"><button class="btn btn-success btn-sm">answered</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/restore"><button class="btn btn-outline btn-sm">restore</button></form>`}
-      ${q.status === "hidden" ? `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/restore"><button class="btn btn-outline btn-sm">restore</button></form>` : `<form method="POST" action="/admin/talks/${session.id}/questions/${q.id}/hide"><button class="btn btn-danger btn-sm">hide</button></form>`}
-    </div>
-  </div>`;
-  const body = `<div class="admin-shell">
-    <div class="card admin-hero">
-      <div>
-        <p class="eyebrow">Run Q&A</p>
-        <h1 style="color:var(--ink);text-transform:uppercase">${escHtml(session.title)}</h1>
-        <p class="muted">Audience questions are accepted and synthesized automatically. Use this view to mark presenter-ready themes answered.</p>
-      </div>
-      <div class="qa-toolbar">
-        <a class="btn btn-outline btn-sm" href="/slides/t/${session.id}/qa" target="_blank">Open projector Q&A</a>
-        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}/ai-run" target="_blank" rel="noopener">AI processing log</a>
-        <a class="btn btn-ghost btn-sm" href="/admin/talks/${session.id}">control room</a>
-      </div>
-    </div>
-    <div class="qa-tabs mt-16">
-      <div class="card kpi"><div class="kpi-value">${count("live") + count("pinned")}</div><div class="muted">live queue</div></div>
-      <div class="card kpi"><div class="kpi-value">${pending.length}</div><div class="muted">secondary raw</div></div>
-      <div class="card kpi"><div class="kpi-value">${count("answered")}</div><div class="muted">answered</div></div>
-      <div class="card kpi"><div class="kpi-value">${count("hidden") + count("rejected")}</div><div class="muted">hidden/rejected</div></div>
-    </div>
-    <div class="qa-grid mt-16">
-      <section class="card"><p class="eyebrow">Run Q&A</p><h2>Synthesized presenter themes</h2><p class="muted mt-8">Presenter-ready themes are the main operator queue.</p>${rows.length ? rows.map(questionCard).join("") : `<p class="muted">No synthesized themes yet.</p>`}</section>
-      <aside class="card"><h2>Secondary: raw submissions</h2>${pending.length ? pending.map((p) => `<div class="qa-item"><strong>${escHtml(p.raw_text)}</strong><div class="qa-meta"><span>${p.status}</span><span>${new Date(p.submitted_at * 1000).toLocaleTimeString()}</span></div></div>`).join("") : `<p class="muted">No pending submitted questions.</p>`}
-      <h2 class="mt-24">Processing history</h2>${runs.length ? runs.map((r) => `<div class="qa-item"><strong>${escHtml(r.status)}</strong><div class="qa-meta"><span>${new Date(r.started_at * 1000).toLocaleTimeString()}</span>${r.finished_at ? `<span>done=${new Date(r.finished_at * 1000).toLocaleTimeString()}</span>` : ""}</div>${r.summary ? `<p class="muted mt-8">${escHtml(r.summary)}</p>` : ""}${r.error ? `<p style="color:var(--danger)" class="mt-8">${escHtml(r.error)}</p>` : ""}</div>`).join("") : `<p class="muted">No processing runs recorded.</p>`}</aside>
-    </div>
-  </div>
-  ${qaToggleScript()}`;
-  return layout(`Q&A: ${session.title}`, body, true, auth);
-}
-
-function qaSwitch(sessionId: string, isOpen: boolean) {
-  return `<div class="qa-switch ${isOpen ? "qa-switch-open" : "qa-switch-paused"}" data-qa-switch data-session-id="${sessionId}">
-    <button type="button" data-qa-state="open" aria-pressed="${isOpen ? "true" : "false"}">Accept questions</button>
-    <button type="button" data-qa-state="paused" aria-pressed="${isOpen ? "false" : "true"}">Pause questions</button>
-  </div>`;
-}
-
-function qaToggleScript() {
-  return `<script>
-document.addEventListener('click', async (event) => {
-  const sw = event.target.closest && event.target.closest('[data-qa-switch]');
-  if (sw) {
-    event.preventDefault();
-    const button = event.target.closest('[data-qa-state]');
-    const rect = sw.getBoundingClientRect();
-    const clickedLeft = event.clientX < rect.left + rect.width / 2;
-    const nextState = button ? button.dataset.qaState : (clickedLeft ? 'open' : 'paused');
-    const sessionId = sw.dataset.sessionId;
-    if ((nextState === 'open') === sw.classList.contains('qa-switch-open')) return;
-    sw.querySelectorAll('button').forEach((b) => b.disabled = true);
-    try {
-      const res = await fetch('/admin/talks/' + sessionId + '/state/' + nextState, { method: 'POST', headers: { 'Accept': 'application/json' } });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.message || 'Could not update questions state.');
-      const isOpen = data.qa_state === 'open';
-      document.querySelectorAll('[data-qa-switch]').forEach((el) => {
-        el.classList.toggle('qa-switch-open', isOpen);
-        el.classList.toggle('qa-switch-paused', !isOpen);
-        el.querySelector('[data-qa-state="open"]').setAttribute('aria-pressed', isOpen ? 'true' : 'false');
-        el.querySelector('[data-qa-state="paused"]').setAttribute('aria-pressed', isOpen ? 'false' : 'true');
-      });
-      document.querySelectorAll('[data-qa-status]').forEach((el) => {
-        el.textContent = isOpen ? 'Accepting audience questions' : 'Not accepting new questions';
-        el.classList.toggle('pill-active', isOpen);
-        el.classList.toggle('pill-warn', !isOpen);
-      });
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not update questions state.');
-    } finally {
-      sw.querySelectorAll('button').forEach((b) => b.disabled = false);
-    }
-    return;
-  }
-});
-
-function escapeHtmlAdmin(s) { return String(s ?? '').replace(/[&<>\"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
-function adminQuestionActions(sessionId, themeId, status) {
-  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
-    + (status !== 'pinned' ? '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/pin"><button class="btn btn-outline btn-sm">pin</button></form>' : '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/unpin"><button class="btn btn-outline btn-sm">unpin</button></form>')
-    + '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/answer"><button class="btn btn-success btn-sm">answered</button></form>'
-    + '<form method="POST" action="/admin/talks/' + sessionId + '/questions/' + themeId + '/hide"><button class="btn btn-danger btn-sm">hide</button></form>'
-    + '</div>';
-}
-function renderAdminThemes(presenter) {
-  const root = document.querySelector('[data-admin-themes]');
-  const sw = document.querySelector('[data-qa-switch]');
-  if (!root || !sw || !presenter) return;
-  const sessionId = sw.dataset.sessionId;
-  const themes = presenter.themes || [];
-  const lead = themes.slice(0, 3);
-  const more = themes.slice(3, 10);
-  const grid = '<div class="mt-16" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">'
-    + (lead.length ? lead.map((q, idx) => '<div class="qa-item" style="border-color:' + (idx === 0 ? 'var(--line-hot)' : 'var(--line)') + ';box-shadow:' + (idx === 0 ? '0 0 24px rgba(50,255,154,.10)' : 'none') + ';margin-top:0"><div class="muted" style="font-size:.78rem;font-weight:900;margin-bottom:8px">THEME ' + (idx + 1) + '</div><strong style="font-size:1.05rem;color:var(--ink)">' + escapeHtmlAdmin(q.text) + '</strong><div class="qa-meta"><span>' + q.source_count + ' source' + (q.source_count === 1 ? '' : 's') + '</span><span>score=' + q.support_count + '</span><span>' + escapeHtmlAdmin(q.status) + '</span></div>' + adminQuestionActions(sessionId, q.id, q.status) + '</div>').join('') : '<div class="qa-item mt-16"><strong>No audience themes yet.</strong><p class="muted mt-8">When attendees ask, submissions will be cleaned up, merged, and shown here as presenter-ready questions.</p></div>')
-    + '</div>';
-  const moreHtml = '<div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px"><h2 style="font-size:1.05rem">More presenter-ready questions</h2>'
-    + (more.length ? more.map((q) => '<div class="qa-item"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><strong>' + escapeHtmlAdmin(q.text) + '</strong><span class="pill pill-active">' + escapeHtmlAdmin(q.status) + '</span></div><div class="qa-meta"><span>score=' + q.support_count + '</span><span>' + new Date(q.created_at * 1000).toLocaleTimeString() + '</span></div>' + adminQuestionActions(sessionId, q.id, q.status) + '</div>').join('') : '<p class="muted mt-8">No other live questions.</p>')
-    + (presenter.answered_count ? '<p class="muted mt-16">' + presenter.answered_count + ' answered question' + (presenter.answered_count === 1 ? '' : 's') + ' hidden from this priority view.</p>' : '')
-    + '</div>';
-  root.innerHTML = grid + moreHtml;
-}
-if (window.EventSource && document.querySelector('[data-admin-themes]')) {
-  const sw = document.querySelector('[data-qa-switch]');
-  const qaEvents = new EventSource('/api/sessions/' + sw.dataset.sessionId + '/qa/events');
-  qaEvents.addEventListener('qa', (event) => { try { renderAdminThemes(JSON.parse(event.data).presenter); } catch {} });
-}
-
-document.addEventListener('submit', async (event) => {
-  const form = event.target;
-  if (!(form instanceof HTMLFormElement)) return;
-  const action = form.getAttribute('action') || '';
-  const questionActionPattern = new RegExp('^/admin/talks/[^/]+/questions/[^/]+/(pin|unpin|answer|hide|restore)$');
-  if (!questionActionPattern.test(action)) return;
-  event.preventDefault();
-  const button = form.querySelector('button');
-  const card = form.closest('.qa-item');
-  const oldText = button ? button.textContent : '';
-  if (button) { button.disabled = true; button.textContent = 'saving…'; }
-  try {
-    const res = await fetch(action, { method: 'POST', headers: { 'Accept': 'application/json' } });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.message || 'Could not update question.');
-    if (card) {
-      if (data.action === 'answer' || data.action === 'hide') {
-        card.style.transition = 'opacity .16s ease, transform .16s ease';
-        card.style.opacity = '.35';
-        card.style.transform = 'scale(.995)';
-        setTimeout(() => card.remove(), 170);
-      } else {
-        const pill = card.querySelector('.pill');
-        if (pill && data.question && data.question.status) pill.textContent = data.question.status;
-      }
-    }
-  } catch (err) {
-    if (button) { button.disabled = false; button.textContent = oldText; }
-    alert(err instanceof Error ? err.message : 'Could not update question.');
-  }
-});
-</script>`;
-}
 
 function safeReadSmall(path: string | null, maxBytes = 240_000) {
   if (!path) return { label: "not recorded", content: "" };
@@ -1287,311 +653,6 @@ function safeReadSmall(path: string | null, maxBytes = 240_000) {
   return { label: path + (truncated ? ` (truncated to ${maxBytes} chars)` : ""), content: truncated ? data.slice(0, maxBytes) : data };
 }
 
-function aiRunPage(sessionId: string, auth: AuthContext) {
-  const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
-  if (!session) return null;
-  const run = db.query<{ id: string; status: string; started_at: number; finished_at: number | null; input_path: string | null; output_path: string | null; error: string | null; summary: string | null }, [string]>(
-    "SELECT id, status, started_at, finished_at, input_path, output_path, error, summary FROM qa_agent_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT 1"
-  ).get(sessionId);
-  if (!run) {
-    return layout(`AI run: ${session.title}`, `<div class="admin-shell"><div class="card"><p class="eyebrow">AI run audit</p><h1 style="color:var(--ink)">${escHtml(session.title)}</h1><p class="muted mt-16">No AI/Codex runs have been recorded for this talk yet.</p><a class="btn btn-outline mt-24" href="/admin/talks/${session.id}#questions">back to questions</a></div></div>`, true, auth);
-  }
-  const input = safeReadSmall(run.input_path);
-  const output = safeReadSmall(run.output_path);
-  const body = `<div class="admin-shell">
-    <div class="card">
-      <p class="eyebrow">AI run audit</p>
-      <h1 style="color:var(--ink);margin-bottom:8px">${escHtml(session.title)}</h1>
-      <p class="muted">Raw input and output from the latest recorded question-processing run.</p>
-      <div class="qa-meta mt-16"><span>run=${escHtml(run.id)}</span><span>status=${escHtml(run.status)}</span><span>started=${new Date(run.started_at * 1000).toLocaleString()}</span>${run.finished_at ? `<span>finished=${new Date(run.finished_at * 1000).toLocaleString()}</span>` : ""}</div>
-      ${run.summary ? `<p class="mt-16"><strong>Summary:</strong> ${escHtml(run.summary)}</p>` : ""}
-      ${run.error ? `<p class="mt-16" style="color:var(--danger)"><strong>Error:</strong> ${escHtml(run.error)}</p>` : ""}
-      ${!run.input_path && !run.output_path ? `<p class="muted mt-16">This run did not record raw files. It was probably the built-in deterministic fallback, not the external Codex worker.</p>` : ""}
-      <a class="btn btn-outline mt-24" href="/admin/talks/${session.id}#questions">back to questions</a>
-    </div>
-    <div class="card mt-16">
-      <h2>Raw input</h2>
-      <p class="muted mt-8">${escHtml(input.label)}</p>
-      ${input.content ? `<pre style="white-space:pre-wrap;overflow:auto;max-height:520px;background:#030608;border:1px solid var(--line);padding:14px;border-radius:var(--radius);margin-top:12px">${escHtml(input.content)}</pre>` : `<p class="muted mt-16">No raw input content available.</p>`}
-    </div>
-    <div class="card mt-16">
-      <h2>${output.content ? "Raw Codex output" : "Codex output"}</h2>
-      ${output.content ? `<p class="muted mt-8">${escHtml(output.label)}</p><pre style="white-space:pre-wrap;overflow:auto;max-height:520px;background:#030608;border:1px solid var(--line);padding:14px;border-radius:var(--radius);margin-top:12px">${escHtml(output.content)}</pre>` : `<p class="muted mt-8">No Codex output was written for this run. The app used fallback processing instead, so the presenter still sees a question/theme.</p>`}
-    </div>
-  </div>`;
-  return layout(`AI run: ${session.title}`, body, true, auth);
-}
-
-function qrPage(sessionId: string, auth: AuthContext, freshToken: string | null = null) {
-  const session = db.query<{ id: string; title: string; presenter: string }, [string]>(
-    "SELECT id, title, presenter FROM sessions WHERE id = ?"
-  ).get(sessionId);
-  if (!session) return null;
-
-  const sessionUrl = sessionPublicUrl(session.id);
-
-  const body = `<div class="qr-show shell text-center">
-  <section class="qr-stage card">
-    <div class="qr-title">
-      <p class="eyebrow">Scan for public Q&A + feedback</p>
-      <h1>${escHtml(session.title)}</h1>
-      ${session.presenter ? `<p class="muted">${escHtml(session.presenter)}</p>` : ""}
-    </div>
-    <div class="qr-code-frame"><div id="qrcode" style="display:flex;justify-content:center"></div></div>
-    <p class="qr-url">${escHtml(sessionUrl)}</p>
-    <div class="qr-actions">
-      <a href="/t/${session.id}" class="btn btn-outline btn-sm" target="_blank">Open public page</a>
-      <a href="/admin/talks/${session.id}" class="btn btn-ghost btn-sm">Back to control room</a>
-    </div>
-  </section>
-  <details class="qr-operator"><summary>Room operator access</summary>${accessPanel(session.id, auth, freshToken)}</details>
-</div>
-<style>
-  .qr-show{max-width:none;min-height:calc(100vh - 104px);display:grid;place-items:center;padding:18px 24px 42px}.qr-stage{width:min(96vw,1200px);padding:clamp(18px,3vw,34px);margin:0}.qr-title h1{font-size:clamp(1.5rem,3.2vw,3.2rem);line-height:1.05;margin:4px auto 0;max-width:1050px}.qr-title .muted{font-size:clamp(1rem,1.6vw,1.5rem);margin-top:8px}.qr-code-frame{display:inline-block;background:#fff;padding:clamp(16px,2vw,28px);margin:clamp(14px,2vw,24px) auto 14px;border:2px solid var(--line-hot);box-shadow:0 0 38px rgba(50,255,154,.22)}.qr-url{font-size:clamp(.95rem,1.6vw,1.5rem);background:var(--bg);padding:12px 18px;border-radius:8px;word-break:break-all;margin:0 auto;max-width:980px;color:var(--ink)}.qr-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px;opacity:.72}.qr-operator{width:min(96vw,1200px);margin-top:12px;color:var(--muted);opacity:.55}.qr-operator[open]{opacity:1}.qr-operator summary{cursor:pointer;font-weight:900}.qr-operator .card{text-align:left;margin-top:10px}@media(max-height:760px){.qr-show{place-items:start center}.qr-title h1{font-size:clamp(1.25rem,2.5vw,2.2rem)}.qr-code-frame{margin:10px auto;padding:14px}.qr-url{font-size:.95rem}.qr-actions{margin-top:10px}.qr-operator{display:none}}
-</style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script>
-  const size = Math.floor(Math.min(window.innerWidth * 0.72, (window.innerHeight - 280) * 0.82, 680));
-  new QRCode(document.getElementById("qrcode"), {
-    text: ${JSON.stringify(sessionUrl)},
-    width: Math.max(360, size),
-    height: Math.max(360, size),
-    colorDark: "#000000",
-    colorLight: "#ffffff",
-    correctLevel: QRCode.CorrectLevel.M
-  });
-</script>`;
-
-  return layout(`QR Code: ${session.title}`, body, true, auth);
-}
-
-function attendeePage(sessionId: string) {
-  const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
-
-  if (!session) return null;
-
-  if (!session.active) {
-    return layout(
-      session.title,
-      `<div class="container text-center" style="padding-top:60px">
-        <div class="card">
-          <div style="font-size:2rem;color:var(--danger)">[closed]</div>
-          <h2 style="margin:12px 0 8px">Talk page closed</h2>
-          <p class="muted">Talk <strong>${escHtml(session.title)}</strong> is no longer being collected.</p>
-        </div>
-      </div>`,
-      false
-    );
-  }
-
-  scheduleQaProcessing(sessionId);
-  const qaOpen = session.qa_enabled && session.qa_state === "open";
-  const qaQuestions = publicQuestions(sessionId, true).slice(0, 12);
-  const qaPanel = session.qa_enabled ? `<section class="card" id="qaPanel">
-    <p class="eyebrow" style="margin-bottom:8px">Public Q&A</p>
-    <h2>Ask a public question</h2>
-    <p class="muted mt-8">Public Q&A questions are visible to the room.</p>
-    ${qaOpen ? `<form id="qaForm" class="mt-16">
-      <textarea name="question" id="qaQuestion" maxlength="1000" required placeholder="Ask a concise question for the presenter…"></textarea>
-      <button type="submit" class="btn btn-primary mt-8" style="width:100%">submit question</button>
-      <p class="muted mt-8" id="qaStatus"></p>
-    </form>` : `<p class="muted mt-16">Questions are closed right now.</p>`}
-    <div class="mt-24" style="border-top:1px solid var(--line);padding-top:16px">
-      <h2 style="font-size:1.05rem">Questions from the room</h2>
-      <p class="muted mt-8">Vote on questions you want the presenter to answer.</p>
-      <div id="qaPublic" class="mt-16">
-        ${(() => { const initial = attendeeQaPayload(session.id)?.questions ?? []; return initial.length ? initial.map((q: any) => `<div class="qa-item" data-qid="${escHtml(q.id)}"><strong>${escHtml(q.text)}</strong><div class="qa-meta">${q.answered ? `<span>answered</span>` : `<button type="button" class="btn btn-outline qa-vote" data-vote="${escHtml(q.id)}" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="${escHtml(q.id)}" data-dir="down">👎 down</button><span>${escHtml(q.status)}</span>`}<span>score=${q.support_count}</span></div></div>`).join("") : `<p class="muted">No questions yet.</p>`; })()}
-      </div>
-    </div>
-  </section>` : "";
-
-  const QUICK_TAGS = ["Makes sense", "Confused", "Too fast", "Too slow", "Great demo", "More demos", "More depth", "Useful example"];
-
-  const body = `<div class="phone-bg"><div class="phone-card" style="padding-top:10px;padding-bottom:34px">
-  <div class="feedback-title">
-    <div style="font-size:0.85rem;letter-spacing:.06em;color:var(--muted);margin-bottom:4px">Talk</div>
-    <h1 >${escHtml(session.title)}</h1>
-    ${session.presenter ? `<p class="muted" style="margin-top:4px">${escHtml(session.presenter)}</p>` : ""}
-    ${session.description ? `<p class="muted" style="margin-top:4px;font-size:0.9rem">${escHtml(session.description)}</p>` : ""}
-  </div>
-
-  <div class="card" style="margin-bottom:16px">
-    <p class="eyebrow" style="margin-bottom:8px">Slides</p>
-    <h2>Open the deck</h2>
-    <p class="muted mt-8">Leave this page open and launch the slides in a new tab.</p>
-    ${session.slides_url ? `<a class="btn btn-primary mt-16" href="${escHtml(session.slides_url)}" target="_blank" rel="noopener" style="width:100%">Open slides</a>` : `<p class="muted mt-16">Slides link coming soon.</p>`}
-  </div>
-
-  ${qaPanel}
-
-  <form method="POST" action="/t/${session.id}/submit" id="feedbackForm">
-    <div class="card">
-      <p class="eyebrow" style="margin-bottom:8px">Private feedback to presenter</p>
-      <h2>Send private feedback to ${escHtml(session.presenter || "the presenter")}</h2>
-      <p class="muted mt-8">This goes privately to the presenter/organizer, not Public Q&A. Send updates any time.</p>
-      <div style="margin-top:12px">
-        ${QUICK_TAGS.map((t) => `<span class="chip" data-tag="${escHtml(t)}" tabindex="0" role="checkbox" aria-checked="false">${escHtml(t)}</span>`).join("")}
-      </div>
-      <input type="hidden" name="tags" id="tagsInput" value="[]" />
-    </div>
-
-    <div class="card">
-      <h2>Add a note <span class="muted" style="font-size:0.85rem;font-weight:400">(optional)</span></h2>
-      <div style="margin-top:12px;position:relative">
-        <textarea name="comment" id="commentArea" rows="3" placeholder="Optional: what should ${session.presenter ? escHtml(session.presenter) : 'the presenter'} know?"></textarea>
-        <button type="button" id="micBtn" title="Dictate" aria-label="Start dictation" style="position:absolute;bottom:10px;right:10px;width:54px;height:34px;padding:0;font-size:.72rem">MIC</button>
-      </div>
-      <p class="muted mt-8" style="font-size:0.8rem" id="micStatus"></p>
-    </div>
-
-    <button type="submit" class="btn btn-primary" style="width:100%;font-size:1.1rem;padding:16px">
-      send feedback
-    </button>
-  </form>
-</div></div>
-
-<script>
-// Q&A attendee page/support
-const qaForm = document.getElementById('qaForm');
-const qaStatus = document.getElementById('qaStatus');
-const qaPublic = document.getElementById('qaPublic');
-async function refreshQa() {
-  if (!qaPublic) return;
-  const res = await fetch('/api/sessions/${session.id}/qa/public.json');
-  if (!res.ok) return;
-  const data = await res.json();
-  qaPublic.innerHTML = data.questions.length ? data.questions.map(renderPublicQuestion).join('') : '<p class="muted">No questions yet.</p>';
-}
-function escapeHtml(s) { return String(s).replace(/[&<>\"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c])); }
-function renderPublicQuestion(q) {
-  const controls = q.answered ? '<span>answered</span>' : '<button type="button" class="btn btn-outline qa-vote" data-vote="' + escapeHtml(q.id) + '" data-dir="up">👍 up</button><button type="button" class="btn btn-outline qa-vote" data-vote="' + escapeHtml(q.id) + '" data-dir="down">👎 down</button><span>' + escapeHtml(q.status) + '</span>';
-  return '<div class="qa-item" data-qid="' + escapeHtml(q.id) + '"><strong>' + escapeHtml(q.text) + '</strong><div class="qa-meta">' + controls + '<span>score=' + q.support_count + '</span></div></div>';
-}
-if (window.EventSource && qaPublic) {
-  const qaEvents = new EventSource('/api/sessions/${session.id}/qa/events');
-  qaEvents.addEventListener('qa', (event) => {
-    try { const data = JSON.parse(event.data); const feed = data.public || data; qaPublic.innerHTML = feed.questions.length ? feed.questions.map(renderPublicQuestion).join('') : '<p class="muted">No questions yet.</p>'; } catch {}
-  });
-}
-qaForm && qaForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const question = document.getElementById('qaQuestion').value.trim();
-  if (!question) return;
-  qaStatus.textContent = 'Submitting question…';
-  const res = await fetch('/api/sessions/${session.id}/qa/questions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question }) });
-  const data = await res.json().catch(() => ({}));
-  qaStatus.textContent = res.ok ? 'Question queued for grouping.' : ('Error: ' + (data.message || data.error || 'Question could not be saved.')); console[res.ok ? 'info' : 'warn']('qa submit response', res.status, data);
-  if (res.ok) {
-    document.getElementById('qaQuestion').value = '';
-    setTimeout(refreshQa, 1200);
-    setTimeout(refreshQa, 3000);
-  }
-});
-document.addEventListener('click', async (e) => {
-  const btn = e.target.closest && e.target.closest('[data-vote]');
-  if (!btn) return;
-  btn.disabled = true;
-  const res = await fetch('/api/sessions/${session.id}/qa/questions/' + btn.dataset.vote + '/vote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ value: btn.dataset.dir === 'down' ? -1 : 1 }) });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    alert(data.message || data.error || 'Vote could not be saved.');
-  }
-  await refreshQa();
-});
-setInterval(refreshQa, 8000);
-
-// Feedback signals
-const chips = document.querySelectorAll('.chip[data-tag]');
-const tagsInput = document.getElementById('tagsInput');
-let selectedTags = new Set();
-function updateTags() {
-  tagsInput.value = JSON.stringify([...selectedTags]);
-  chips.forEach((c) => {
-    c.classList.toggle('selected', selectedTags.has(c.dataset.tag));
-    c.setAttribute('aria-checked', selectedTags.has(c.dataset.tag) ? 'true' : 'false');
-  });
-}
-chips.forEach((c) => {
-  c.addEventListener('click', () => {
-    selectedTags.has(c.dataset.tag) ? selectedTags.delete(c.dataset.tag) : selectedTags.add(c.dataset.tag);
-    updateTags();
-  });
-  c.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); c.click(); }});
-});
-
-// Dictation
-const micBtn = document.getElementById('micBtn');
-const micStatus = document.getElementById('micStatus');
-const commentArea = document.getElementById('commentArea');
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (!SpeechRecognition) {
-  micBtn.style.display = 'none';
-} else {
-  let recog = null;
-  let listening = false;
-  micBtn.addEventListener('click', () => {
-    if (listening) { recog && recog.stop(); return; }
-    recog = new SpeechRecognition();
-    recog.continuous = true;
-    recog.interimResults = true;
-    recog.lang = 'en-US';
-    let baseText = commentArea.value;
-    if (baseText && !baseText.endsWith(' ')) baseText += ' ';
-    recog.onstart = () => { listening = true; micBtn.textContent = 'REC'; micBtn.style.background = 'var(--danger)'; micStatus.textContent = 'mic open // listening'; };
-    recog.onresult = (e) => {
-      let interim = '', final = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) final += e.results[i][0].transcript;
-        else interim += e.results[i][0].transcript;
-      }
-      if (final) baseText += final;
-      commentArea.value = baseText + interim;
-    };
-    recog.onerror = () => { micStatus.textContent = 'mic_error // check browser permissions'; };
-    recog.onend = () => { listening = false; micBtn.textContent = 'MIC'; micBtn.style.background = 'var(--line-hot)'; micStatus.textContent = ''; commentArea.value = baseText.trimEnd(); };
-    recog.start();
-  });
-}
-</script>`;
-
-  return layout(session.title, body, false);
-}
-
-function slidesQaPage(sessionId: string) {
-  const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sessionId);
-  if (!session) return null;
-  const body = `<div class="container" style="max-width:1100px">
-    <div class="feedback-title"><div style="font-size:.85rem;color:var(--muted);text-transform:uppercase">Projector Q&A</div><h1>${escHtml(session.title)}</h1></div>
-    <div id="slideQa" class="card"><p class="muted">loading queue…</p></div>
-  </div>
-  <script>
-    const box = document.getElementById('slideQa');
-    function esc(s){return String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));}
-    async function tick(){
-      const res = await fetch('/api/sessions/${session.id}/qa/slides.json');
-      const data = await res.json();
-      box.innerHTML = '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap"><div><h2>Synthesized presenter themes</h2><p class="muted mt-8">Top presenter-ready themes, synthesized from audience questions.</p></div><div class="qa-switch qa-switch-open"><button type="button" aria-pressed="true">Themes</button><button type="button" aria-pressed="false">Raw questions</button></div></div>' + (data.questions.length ? data.questions.slice(0,5).map((q,i)=>'<div class="qa-item" style="font-size:1.45rem;padding:22px;margin-top:16px"><div class="muted">Theme '+(i+1)+' · score '+q.support_count+'</div><strong>'+esc(q.text)+'</strong></div>').join('') : '<p class="muted mt-16">No synthesized themes yet.</p>');
-    }
-    tick(); setInterval(tick, 5000);
-  </script>`;
-  return layout(`Slides Q&A: ${session.title}`, body, false);
-}
-
-function thankYouPage(sessionId: string, sessionTitle: string) {
-  return layout(
-    "Thanks",
-    `<div class="container text-center" style="padding-top:60px">
-      <div class="card">
-        <div style="font-size:4rem;color:var(--line-hot)">Thanks</div>
-        <h1 style="font-size:1.8rem;margin:16px 0 8px">Thanks</h1>
-        <p class="muted">Feedback for <strong>${escHtml(sessionTitle)}</strong> was received.</p>
-        <p class="muted mt-16" style="font-size:0.85rem">You can send more feedback anytime.</p>
-        <a href="/t/${sessionId}" class="btn btn-outline" style="margin-top:24px;display:inline-block">back to talk page</a>
-      </div>
-    </div>`,
-    false
-  );
-}
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
@@ -1600,11 +661,14 @@ const PORT = parseInt(process.env.PORT ?? "8000", 10);
 Bun.serve({
   port: PORT,
   routes: {
+    "/": appHtml,
     "/t/:id": appHtml,
     "/admin": appHtml,
     "/admin/dashboard": appHtml,
     "/admin/login-page": appHtml,
     "/admin/talks/:id": appHtml,
+    "/admin/talks/:id/qr": appHtml,
+    "/admin/talks/:id/ai-run": appHtml,
     "/slides/t/:id/qa": appHtml,
     "/slides/s/:id/qa": appHtml,
     "/embed/t/:id/qa": appHtml,
@@ -1615,21 +679,26 @@ Bun.serve({
     const path = url.pathname;
     const method = req.method;
     const auth = await getAuth(req);
-    const isAdminPost = method === "POST" && (path === "/sessions" || path === "/api/admin/sessions" || path.startsWith("/admin/") || path.startsWith("/api/admin/") || path === "/logout");
+    const isAdminPost = method === "POST" && (path === "/api/admin/sessions" || path.startsWith("/admin/") || path.startsWith("/api/admin/") || path === "/logout");
     if (isAdminPost && !sameOriginOk(req)) return html("<h1>Forbidden</h1>", 403);
 
-    if (path === "/" && method === "GET") return html(publicLandingPage());
+    if (path === "/" && method === "GET") return appShell();
+
+    if (path === "/api/talks" && method === "GET") {
+      const rooms = db.query<{ id: string; title: string; presenter: string; description: string }, []>("SELECT id,title,presenter,description FROM sessions WHERE active = 1 ORDER BY CASE id WHEN 'smart' THEN 1 WHEN 'ktc' THEN 2 WHEN 'checkin' THEN 3 WHEN 'llms' THEN 4 WHEN 'coin' THEN 5 ELSE 9 END, title").all();
+      return json({ rooms });
+    }
 
     if (path === "/api/admin/me" && method === "GET") {
       return json({ authenticated: !!auth, scope: auth?.scope ?? null, session_id: auth?.session_id ?? null });
     }
 
-    if ((path === "/admin" || path === "/admin/dashboard") && method === "GET") return auth?.scope === "global_admin" ? html(homePage(auth)) : redirect("/admin/login-page");
+    if ((path === "/admin" || path === "/admin/dashboard") && method === "GET") return appShell();
 
     if (path === "/admin/login" && method === "POST") {
       const form = await req.formData();
       const key = String(form.get("key") ?? "");
-      if (key !== ADMIN_KEY) return html(lockedConsole("admin"), 401);
+      if (key !== ADMIN_KEY) return redirect("/admin/login-page?error=bad_key");
       const session = await createAuthSession("global_admin", null, GLOBAL_ADMIN_MAX_AGE);
       return redirect("/admin/dashboard", 303, { "Set-Cookie": session.cookie });
     }
@@ -1651,20 +720,6 @@ Bun.serve({
       db.query("UPDATE room_capabilities SET claimed_at = COALESCE(claimed_at, unixepoch()), last_used_at = unixepoch() WHERE id = ?").run(cap.id);
       const session = await createAuthSession("room_admin", cap.session_id, ROOM_ADMIN_MAX_AGE);
       return redirect(`/admin/talks/${cap.session_id}`, 303, { "Set-Cookie": session.cookie });
-    }
-
-    if (path === "/sessions" && method === "POST") {
-      const form = await req.formData();
-      const title = String(form.get("title") ?? "").trim().slice(0, 160);
-      const presenter = String(form.get("presenter") ?? "").trim().slice(0, 120);
-      const description = String(form.get("description") ?? "").trim().slice(0, 240);
-      if (!title) return redirect("/admin/dashboard");
-      const id = randomId("s");
-      if (auth?.scope !== "global_admin") return html(lockedConsole("admin"), 401);
-      db.query("INSERT INTO sessions (id, title, presenter, description, qa_state, qa_mode, qa_display_mode, qa_enabled, short_code, feedback_state, ai_context) VALUES (?, ?, ?, ?, 'open', 'moderated', 'queue', 1, ?, 'open', ?)").run(id, title, presenter, description, id, [title, presenter, description].filter(Boolean).join("\n\n"));
-      const capToken = await createRoomCapability(id);
-      const page = qrPage(id, auth, capToken);
-      return page ? html(page) : redirect(`/admin/talks/${id}/qr`);
     }
 
     if (path === "/api/admin/sessions" && method === "GET") {
@@ -1700,11 +755,7 @@ Bun.serve({
     if (oldAdminMatch && method === "GET") return redirect(`/admin/talks/${oldAdminMatch[1]}`);
 
     const adminMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)$/);
-    if (adminMatch && method === "GET") {
-      if (!canManageRoom(auth, adminMatch[1])) return html(lockedConsole("room"), 401);
-      const exists = db.query<{ id: string }, [string]>("SELECT id FROM sessions WHERE id = ?").get(adminMatch[1]);
-      return exists ? html(String.raw`<!doctype html><html><head><title>DevDays Feedback</title><script type="module" src="/src/ui/main.tsx"></script></head><body><div id="root"></div></body></html>`) : html("<h1>Session not found</h1>", 404);
-    }
+    if (adminMatch && method === "GET") return appShell();
 
     const qaStateApiMatch = path.match(/^\/api\/admin\/talks\/([a-z0-9]+)\/state$/);
     if (qaStateApiMatch && method === "POST") {
@@ -1792,20 +843,21 @@ Bun.serve({
       return redirect(`/admin/talks/${sid}#questions`);
     }
 
-    const aiRunMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/ai-run$/);
-    if (aiRunMatch && method === "GET") {
-      const sid = aiRunMatch[1];
-      if (!canManageRoom(auth, sid)) return html(lockedConsole("room"), 401);
-      const page = aiRunPage(sid, auth);
-      return page ? html(page) : html("<h1>Session not found</h1>", 404);
+    const aiRunApiMatch = path.match(/^\/api\/admin\/talks\/([a-z0-9]+)\/ai-run\.json$/);
+    if (aiRunApiMatch && method === "GET") {
+      const sid = aiRunApiMatch[1];
+      if (!canManageRoom(auth, sid)) return json({ error: "unauthorized" }, 401);
+      const session = db.query<SessionRow, [string]>("SELECT * FROM sessions WHERE id = ?").get(sid);
+      if (!session) return json({ error: "not_found" }, 404);
+      const run = db.query<{ id: string; status: string; started_at: number; finished_at: number | null; input_path: string | null; output_path: string | null; error: string | null; summary: string | null }, [string]>("SELECT id, status, started_at, finished_at, input_path, output_path, error, summary FROM qa_agent_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT 1").get(sid);
+      return json({ talk: { id: session.id, title: session.title }, run, input: run ? safeReadSmall(run.input_path) : null, output: run ? safeReadSmall(run.output_path) : null });
     }
 
+    const aiRunMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/ai-run$/);
+    if (aiRunMatch && method === "GET") return appShell();
+
     const qrMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/qr$/);
-    if (qrMatch && method === "GET") {
-      if (!canManageRoom(auth, qrMatch[1])) return html(lockedConsole("room"), 401);
-      const page = qrPage(qrMatch[1], auth);
-      return page ? html(page) : html("<h1>Session not found</h1>", 404);
-    }
+    if (qrMatch && method === "GET") return appShell();
 
     const toggleMatch = path.match(/^\/admin\/talks\/([a-z0-9]+)\/toggle$/);
     if (toggleMatch && method === "POST") {
@@ -1851,8 +903,8 @@ Bun.serve({
         return redirect(`/admin/talks/${sid}`);
       }
       const capToken = await createRoomCapability(sid);
-      const page = adminSessionPage(sid, auth, capToken);
-      return page ? html(page) : html("<h1>Session not found</h1>", 404);
+      if (wantsJson(req)) return json({ ok: true, operator_link: operatorLink(capToken), presenter_message: presenterPacket(sid, capToken) });
+      return redirect(`/admin/talks/${sid}/qr`);
     }
 
     const talkApiMatch = path.match(/^\/api\/talks\/([a-z0-9]+)$/);
@@ -2004,8 +1056,8 @@ Bun.serve({
 
     const slidesMatch = path.match(/^\/(?:embed|slides)\/(?:s|t)\/([a-z0-9]+)\/qa$/);
     if (slidesMatch && method === "GET") {
-      const page = slidesQaPage(slidesMatch[1]);
-      return page ? html(page) : html("<h1>Session not found</h1>", 404);
+      const exists = db.query<{ id: string }, [string]>("SELECT id FROM sessions WHERE id = ?").get(slidesMatch[1]);
+      return exists ? appShell() : html("<h1>Session not found</h1>", 404);
     }
 
     const shortAttendeeMatch = path.match(/^\/s\/([a-z0-9]+)$/);
@@ -2013,40 +1065,8 @@ Bun.serve({
 
     const attendeeMatch = path.match(/^\/t\/([a-z0-9]+)$/);
     if (attendeeMatch && method === "GET") {
-      const page = attendeePage(attendeeMatch[1]);
-      return page ? html(page) : html("<h1>Session not found</h1>", 404);
-    }
-
-    const submitMatch = path.match(/^\/t\/([a-z0-9]+)\/submit$/);
-    if (submitMatch && method === "POST") {
-      const sid = submitMatch[1];
-      const session = db.query<{ title: string; active: number }, [string]>(
-        "SELECT title, active FROM sessions WHERE id = ?"
-      ).get(sid);
-      if (!session) return html("<h1>Session not found</h1>", 404);
-      if (!session.active) return redirect(`/t/${sid}`);
-
-      const form = await req.formData();
-      const ratingRaw = form.get("rating");
-      const rating = ratingRaw ? parseInt(String(ratingRaw), 10) : null;
-      const sentiment = form.get("sentiment") ? String(form.get("sentiment")) : null;
-      const comment = String(form.get("comment") ?? "").trim() || null;
-      const tagsRaw = String(form.get("tags") ?? "[]");
-      let tags = "[]";
-      try {
-        const parsed = JSON.parse(tagsRaw);
-        if (Array.isArray(parsed)) tags = JSON.stringify(parsed.slice(0, 10).map(String));
-      } catch {}
-
-      const { key, isNew } = getSubmitterKey(req);
-      const fid = randomId("f");
-      db.query("INSERT INTO feedback (id, session_id, rating, sentiment, comment, tags) VALUES (?, ?, ?, ?, ?, ?)").run(
-        fid, sid, rating, sentiment, comment, tags
-      );
-      recordInteraction(sid, key, "feedback", sentiment ?? rating, comment, fid, { rating, sentiment, tags: JSON.parse(tags) });
-      const response = html(thankYouPage(sid, session.title));
-      if (isNew) response.headers.append("Set-Cookie", cookieHeader(key));
-      return response;
+      const exists = db.query<{ id: string }, [string]>("SELECT id FROM sessions WHERE id = ?").get(attendeeMatch[1]);
+      return exists ? appShell() : html("<h1>Session not found</h1>", 404);
     }
 
     if (path === "/favicon.ico") return new Response(null, { status: 204 });

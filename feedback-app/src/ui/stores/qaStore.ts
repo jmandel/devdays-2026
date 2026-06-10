@@ -81,7 +81,10 @@ export const useQaStore = create<QaState>((set, get) => ({
     set({ connection: "connecting" });
     const es = new EventSource(`/api/sessions/${id}/qa/events`);
     es.addEventListener("open", () => set({ connection: "live" }));
-    es.addEventListener("error", () => set({ connection: "error" }));
+    es.addEventListener("error", () => {
+      // EventSource fires "error" during normal reconnects; avoid a scary live/error flicker.
+      set({ connection: es.readyState === EventSource.CLOSED ? "error" : "connecting" });
+    });
     es.addEventListener("qa", (event) => {
       try {
         const data = JSON.parse((event as MessageEvent).data) as SsePayload;

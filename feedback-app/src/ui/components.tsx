@@ -113,34 +113,33 @@ export function timeAgo(ts: number): string {
 export function QuestionRow({
   q,
   onVote,
+  myVote,
 }: {
   q: RawQuestion;
   onVote?: (id: string, value: number) => void;
+  myVote?: number;
 }) {
-  const votable = onVote && q.status !== "answered";
+  const active = (myVote ?? 0) > 0;
   return (
-    <div className={`q-row ${q.status === "answered" ? "answered" : ""}`}>
+    <div className="q-row">
       <div className="q-text">
         {q.text}
         <div className="q-meta">
-          <StatusPill status={q.status} />
           <time dateTime={new Date(q.created_at * 1000).toISOString()}>{timeAgo(q.created_at)}</time>
-          {q.theme_id ? <Chip>Theme/{q.theme_id.replace(/^q_/, "")}</Chip> : null}
         </div>
       </div>
       <div className="vote-box">
-        {votable ? (
-          <>
-            <button className="vote-btn" onClick={() => onVote!(q.id, 1)} aria-label="Vote up">
-              +1
-            </button>
-            <span className="vote-score">{q.score}</span>
-            <button className="vote-btn down" onClick={() => onVote!(q.id, -1)} aria-label="Vote down">
-              –
-            </button>
-          </>
+        {onVote ? (
+          <button
+            className={`vote-btn upvote${active ? " voted" : ""}`}
+            onClick={() => onVote(q.id, 1)}
+            aria-label={active ? "Remove your vote" : "Upvote"}
+            aria-pressed={active}
+          >
+            👍{q.score > 0 ? <span className="vote-count">{q.score}</span> : null}
+          </button>
         ) : (
-          <span className="vote-score">{q.score}</span>
+          q.score > 0 ? <span className="vote-score">{q.score}</span> : null
         )}
       </div>
     </div>

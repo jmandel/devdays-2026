@@ -253,7 +253,7 @@ const server = Bun.serve({
         const result = recordVote(db, session.id, req.params.qid, key, Number.isFinite(value) ? value : 1);
         if (!result.ok) return json({ error: result.error }, result.status ?? 400, headers);
         broadcastQa(db, session.id);
-        return json({ ok: true, target_kind: result.target_kind, score: result.score }, 200, headers);
+        return json({ ok: true, target_kind: result.target_kind, score: result.score, my_vote: result.my_vote }, 200, headers);
       },
     },
 
@@ -265,7 +265,7 @@ const server = Bun.serve({
         const result = recordVote(db, session.id, req.params.qid, key, 1);
         if (!result.ok) return json({ error: result.error }, result.status ?? 400, headers);
         broadcastQa(db, session.id);
-        return json({ ok: true, target_kind: result.target_kind, score: result.score }, 200, headers);
+        return json({ ok: true, target_kind: result.target_kind, score: result.score, my_vote: result.my_vote }, 200, headers);
       },
     },
 

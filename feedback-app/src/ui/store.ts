@@ -62,7 +62,7 @@ interface AppState {
   connect: (id: string) => () => void;
   sendPulse: (id: string, value: string) => Promise<void>;
   submitQuestion: (id: string, text: string) => Promise<{ duplicate: boolean }>;
-  vote: (id: string, questionId: string, value: number) => Promise<void>;
+  vote: (id: string, questionId: string, value: number) => Promise<{ my_vote: number; score: number }>;
   submitFeedback: (id: string, input: { rating: number | null; comment: string }) => Promise<void>;
   themeAction: (id: string, themeId: string, action: string) => Promise<void>;
 }
@@ -160,10 +160,11 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   vote: async (id, questionId, value) => {
-    await postJSON(
+    const res = await postJSON(
       `/api/sessions/${encodeURIComponent(id)}/qa/questions/${encodeURIComponent(questionId)}/vote`,
       { value },
     );
+    return { my_vote: res.my_vote as number, score: res.score as number };
   },
 
   submitFeedback: async (id, input) => {

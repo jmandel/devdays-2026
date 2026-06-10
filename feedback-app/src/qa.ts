@@ -161,6 +161,7 @@ export interface VoteResult {
   error?: string;
   target_kind?: "raw" | "theme";
   score?: number;
+  my_vote?: number;
 }
 
 export function recordVote(
@@ -170,7 +171,7 @@ export function recordVote(
   submitterKey: string,
   rawValue: number,
 ): VoteResult {
-  const value = rawValue < 0 ? -1 : 1;
+  const requestedValue = rawValue < 0 ? -1 : 1;
   const sub = db
     .query<SubmissionRow, [string, string]>(
       "SELECT * FROM qa_question_submissions WHERE id = ? AND session_id = ?",
@@ -185,6 +186,13 @@ export function recordVote(
         .get(targetId, sessionId);
   if (!sub && !theme) return { ok: false, status: 404, error: "Question not found." };
   const kind: "raw" | "theme" = sub ? "raw" : "theme";
+  // Toggle: if user already cast the same vote, remove it (set to 0).
+  const existing = db
+    .query<{ value: number }, [string, string]>(
+      "SELECT value FROM qa_question_votes WHERE question_id = ? AND submitter_key = ?",
+    )
+    .get(targetId, submitterKey);
+  const value = existing && existing.value === requestedValue ? 0 : requestedValue;
   const ts = now();
   db.run(
     `INSERT INTO qa_question_votes (question_id, submitter_key, value, target_kind, created_at, updated_at)
@@ -199,7 +207,7 @@ export function recordVote(
   );
   const mappedTheme = sub?.question_id ?? (kind === "theme" ? targetId : null);
   if (mappedTheme) recomputeThemeSupport(db, mappedTheme);
-  return { ok: true, target_kind: kind, score: voteSum(db, targetId) };
+  return { ok: true, target_kind: kind, score: voteSum(db, targetId), my_vote: value };
 }
 
 // ---------------------------------------------------------------------------

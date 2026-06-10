@@ -48,9 +48,17 @@ function PublicQa({ talkId }: { talkId: string }) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [myVotes, setMyVotes] = useState<Record<string, number>>({});
 
   const open = !!talk?.qa_enabled && talk?.qa_state === "open";
   const speaker = talk?.presenter || "the speaker";
+
+  const handleVote = async (qid: string, value: number) => {
+    try {
+      const res = await vote(talkId, qid, value);
+      setMyVotes((prev) => ({ ...prev, [qid]: res.my_vote }));
+    } catch {}
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -71,6 +79,9 @@ function PublicQa({ talkId }: { talkId: string }) {
     }
   };
 
+  const activeQs = (publicQa?.questions ?? []).filter((q) => q.status !== "answered");
+  const answeredQs = (publicQa?.questions ?? []).filter((q) => q.status === "answered");
+
   return (
     <section className="card fade-in d2">
       <div className="row between">
@@ -79,8 +90,7 @@ function PublicQa({ talkId }: { talkId: string }) {
       </div>
       <h2>Ask the room</h2>
       <p className="small muted">
-        Questions here are public to everyone in the room and get grouped into themes for the
-        presenter.
+        Questions are public to everyone in the room. Tap 👍 to show support.
       </p>
       {open ? (
         <div style={{ marginTop: 12 }}>
@@ -109,22 +119,28 @@ function PublicQa({ talkId }: { talkId: string }) {
       {status ? <p className={`form-status ${status.ok ? "" : "err"}`}>{status.msg}</p> : null}
 
       <h3 style={{ marginTop: 22 }}>Questions from the room</h3>
-      {publicQa && publicQa.questions.length > 0 ? (
+      {activeQs.length > 0 ? (
         <div className="q-list">
-          {publicQa.questions.map((q) => (
-            <QuestionRow
-              key={q.id}
-              q={q}
-              onVote={(qid, v) => {
-                vote(talkId, qid, v).catch(() => {});
-              }}
-            />
+          {activeQs.map((q) => (
+            <QuestionRow key={q.id} q={q} myVote={myVotes[q.id]} onVote={handleVote} />
           ))}
         </div>
       ) : (
         <div className="empty" style={{ marginTop: 10 }}>
           No questions yet — be the first to ask.
         </div>
+      )}
+      {answeredQs.length > 0 && (
+        <details style={{ marginTop: 16 }}>
+          <summary className="small muted" style={{ cursor: "pointer" }}>
+            ✅ {answeredQs.length} answered question{answeredQs.length !== 1 ? "s" : ""}
+          </summary>
+          <div className="q-list" style={{ marginTop: 8, opacity: 0.7 }}>
+            {answeredQs.map((q) => (
+              <QuestionRow key={q.id} q={q} myVote={myVotes[q.id]} />
+            ))}
+          </div>
+        </details>
       )}
     </section>
   );

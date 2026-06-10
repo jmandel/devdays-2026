@@ -491,6 +491,19 @@ label.field-label {
 .vote-btn.down { color: var(--muted); font-size: 11px; padding: 1px 8px; border-color: transparent; background: transparent; }
 .vote-btn.down:hover { background: var(--slate-soft); }
 
+.vote-btn.upvote {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 16px; padding: 4px 12px;
+  border-color: var(--line);
+  background: var(--card);
+  color: var(--ink-muted);
+}
+.vote-btn.upvote:hover { background: var(--teal-soft); }
+.vote-btn.upvote.voted {
+  background: var(--teal-soft); border-color: var(--teal); color: var(--teal);
+}
+.vote-count { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+
 .vote-score { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
 
 /* ---- theme cards ---- */

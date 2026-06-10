@@ -102,8 +102,8 @@ type Params<T extends string> = Request & { params: Record<T, string> };
  * HTMLBundle from a handler function, so we self-fetch the internal
  * /__shell route (which serves the bundle) and stream that response.
  */
-function serveShell(req: Request): Promise<Response> {
-  return fetch(new URL("/__shell", req.url));
+function serveShell(_req: Request): Promise<Response> {
+  return fetch(`http://localhost:${PORT}/__shell`);
 }
 
 // ---------------------------------------------------------------------------

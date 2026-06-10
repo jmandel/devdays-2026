@@ -17,10 +17,21 @@ export function AiRunPage({ id }: { id: string }) {
 
   useEffect(() => {
     loadTalk(id).catch(() => {});
-    getJSON(`/api/admin/talks/${encodeURIComponent(id)}/ai-run.json`)
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load run."));
-  }, [id, loadTalk]);
+    let cancelled = false;
+    const poll = () =>
+      getJSON(`/api/admin/talks/${encodeURIComponent(id)}/ai-run.json`)
+        .then((d) => {
+          if (!cancelled) setData(d);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load run.");
+        });
+    poll();
+    const iv = setInterval(() => {
+      if (!cancelled && data?.run?.status === "running") poll();
+    }, 3000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [id, loadTalk, data?.run?.status]);
 
   return (
     <div className="shell wide">
@@ -81,6 +92,8 @@ export function AiRunPage({ id }: { id: string }) {
             <SectionLabel tone="green">Worker output{data.output?.truncated ? " (truncated)" : ""}</SectionLabel>
             {data.output ? (
               <pre className="code-block">{data.output.content}</pre>
+            ) : data.run.status === "running" ? (
+              <p className="small muted">⏳ AI worker is still running…</p>
             ) : (
               <p className="small muted">
                 No output file — the run likely used deterministic fallback processing.

@@ -272,9 +272,13 @@ export function ControlRoomPage({ id }: { id: string }) {
                   <div className="q-row" key={i} style={{ marginBottom: 8 }}>
                     <div className="q-text">
                       {c.comment}
-                      <div className="q-meta">
-                        {c.rating != null ? <Chip>rating {c.rating}/5</Chip> : null}
-                      </div>
+                      {c.rating != null && (
+                        <div className="q-meta">
+                          <span style={{ color: "var(--ink-muted)", fontSize: 13 }}>
+                            {"★".repeat(c.rating)}{"☆".repeat(5 - c.rating)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))

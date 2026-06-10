@@ -493,7 +493,7 @@ label.field-label {
 
 .vote-btn.upvote {
   display: inline-flex; align-items: center; gap: 5px;
-  font-size: 16px; padding: 4px 12px;
+  font-size: 16px; padding: 4px 12px; min-width: 64px; justify-content: center;
   border-color: var(--line);
   background: var(--card);
   color: var(--ink-muted);

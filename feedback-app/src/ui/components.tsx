@@ -136,7 +136,7 @@ export function QuestionRow({
             aria-label={active ? "Remove your vote" : "Upvote"}
             aria-pressed={active}
           >
-            👍{q.score > 0 ? <span className="vote-count">{q.score}</span> : null}
+            👍<span className="vote-count">{q.score}</span>
           </button>
         ) : (
           q.score > 0 ? <span className="vote-score">{q.score}</span> : null

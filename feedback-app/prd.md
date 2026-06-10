@@ -2,9 +2,9 @@
 
 ## 1. Introduction / Overview
 
-DevDays Feedback is a conference-room web app for collecting attendee signals, public Q&A, and private presenter feedback during DevDays 2026 talks. The app is designed for low-friction use in a live room: attendees scan a QR code or open a short public URL, submit quick pulse signals, ask and vote on public questions, and optionally provide private session feedback. Presenters and organizers use a protected control room to monitor live audience pulse, view AI-synthesized Q&A themes, mark themes answered, open a projector-safe room view, display a QR code, inspect AI processing runs, and export feedback.
+DevDays Feedback is a conference-room web app for collecting attendee signals, public Q&A, and private presenter feedback during DevDays 2026 talks. The app is designed for low-friction use in a live room: attendees scan a QR code or open a short public URL, submit quick pulse signals, ask and vote on public questions, and optionally provide private session feedback. Presenters and organizers use a protected control room to monitor live audience pulse, view AI-synthesized Q&A themes, mark themes answered, display a QR code, inspect AI processing runs, and export feedback.
 
-The product intentionally favors automatic workflows over operator-heavy moderation. Attendee submissions are stored as raw questions, processed into presenter-ready themes by a Codex-backed worker when available, and fall back to deterministic merging when AI processing fails. Public attendee views stay live through Server-Sent Events (SSE), and presenter/projector views receive live updates for Q&A themes and pulse summaries.
+The product intentionally favors automatic workflows over operator-heavy moderation. Attendee submissions are stored as raw questions, processed into presenter-ready themes by a Codex-backed worker when available, and fall back to deterministic merging when AI processing fails. Public attendee and presenter views stay live through Server-Sent Events (SSE).
 
 This PRD documents the current app functionality and expected equivalent behavior. It is intended to be detailed enough for a developer or AI agent to recreate an equivalent app, without prescribing exact pixel-level layout.
 
@@ -13,11 +13,11 @@ This PRD documents the current app functionality and expected equivalent behavio
 - Provide a no-login public attendee page for each talk with slides, live pulse, public Q&A, and private feedback.
 - Let attendees submit public questions and vote on raw questions with minimal friction.
 - Automatically synthesize raw audience submissions into concise presenter-ready Q&A themes.
-- Preserve raw attendee questions in public streams while making synthesized themes the primary presenter/projector experience.
+- Preserve raw attendee questions in public streams while making synthesized themes the primary presenter experience.
 - Give presenters/operators a calm control room with live pulse, synthesized themes, raw-question fallback visibility, QR/share utilities, AI run audit, and export.
 - Support room-scoped operator access via capability links, plus global admin access via an admin key.
 - Use local SQLite runtime storage and simple Bun/TypeScript deployment suitable for an exe.dev VM.
-- Maintain live updates using SSE so attendees, admins, and projector views do not depend on manual refreshes.
+- Maintain live updates using SSE so attendees and admins do not depend on manual refreshes.
 - Keep privacy boundaries clear: public Q&A is visible to the room; session feedback is private to presenter/organizer.
 
 ## 3. Personas and User Roles
@@ -46,7 +46,6 @@ A presenter or helper with room-scoped capability access.
 Primary needs:
 - Open a talk-specific control room.
 - See live pulse counts and Q&A themes.
-- Open a projector-safe live room display.
 - Show a large QR code to attendees.
 - Mark synthesized themes pinned, answered, hidden, restored.
 - See private feedback only when appropriate.
@@ -72,19 +71,6 @@ Permissions:
 - Authenticated with global admin cookie after submitting `ADMIN_KEY`.
 - Can manage all rooms.
 
-### 3.4 Projector / Shared Display Viewer
-
-A browser displayed to the room or embedded in slides.
-
-Primary needs:
-- Show live room pulse and synthesized audience themes.
-- Avoid exposing private feedback or operator-only controls.
-- Provide a simple toggle between synthesized themes and raw questions.
-
-Permissions:
-- Public read access to slides/projector view.
-- Does not require login.
-
 ## 4. Scope Summary
 
 ### In Scope
@@ -97,7 +83,6 @@ Permissions:
 - Admin login and dashboard.
 - Room capability links and room-scoped auth.
 - Control room for live pulse, Q&A themes, raw questions, QR, AI log, export, private feedback.
-- Projector/live room Q&A display.
 - AI/fallback Q&A theme synthesis pipeline.
 - SSE live updates.
 - SQLite schema and inline migrations.
@@ -174,7 +159,7 @@ Important fields:
 - `answered_at`, `hidden_at`, `merged_into_question_id`: lifecycle fields.
 
 Expected behavior:
-- Presenter/admin/projector views emphasize themes over raw submissions by default.
+- Presenter/admin views emphasize themes over raw submissions by default.
 - Answering a theme marks it answered and prevents further public voting for mapped raw submissions.
 - Hidden themes are excluded from public raw display when mapped raw submissions would expose hidden content.
 - Merged themes redirect support/source mappings to the retained theme.
@@ -336,37 +321,6 @@ Required behavior:
 - If talk is not found, server returns 404.
 - If Q&A is not open, question form is replaced with “Questions are closed right now.”
 
-### 6.3 Projector / Live Room View (`/slides/t/:id/qa`, `/slides/s/:id/qa`, `/embed/t/:id/qa`, `/embed/s/:id/qa`)
-
-Audience: room display, embedded slides, projector operator.
-
-Purpose:
-- Display live room pulse and audience Q&A in a form safe for public/shared viewing.
-
-Required sections:
-1. Header
-   - Label: Live room view.
-   - Talk title.
-   - Connection status.
-2. Room pulse panel
-   - Shows the last-5-minute pulse total.
-   - Shows counts for the four pulse options.
-   - Shows relative meter/bars for each option.
-3. Q&A panel
-   - Default mode: synthesized themes.
-   - Alternate mode: raw questions.
-   - Segmented control: `Themes` / `Raw questions`.
-   - Theme mode shows top 5 presenter-ready themes, source count, and score.
-   - Raw mode shows up to 8 raw public questions including held questions labeled `needs detail`.
-
-Required behavior:
-- Load talk, slides Q&A, public Q&A, and feedback summary.
-- Subscribe to SSE for live updates.
-- Poll as fallback approximately every 30 seconds.
-- Must not show private feedback comments.
-- Empty theme message should be non-alarming, e.g. “No themes yet — questions will appear here as the room submits them.”
-- If session does not exist, server returns 404.
-
 ### 6.4 Admin Login (`/admin`, `/admin/login-page` when unauthenticated)
 
 Audience: global admin.
@@ -415,11 +369,11 @@ Required content:
    - Presenter when available.
    - Connection/status messaging.
 2. Live room operations card
-   - Primary action should be QR/projector-oriented.
+   - Primary action should be QR-oriented.
    - Quiet utility actions: open public page, AI processing log, export CSV.
    - Workflow copy should indicate automation: questions accepted automatically and themes update as attendees ask/vote.
 3. Room pulse panel
-   - Same four pulse options and last-5-minute counts as projector view.
+   - Same four pulse options and last-5-minute counts used by attendee pulse.
 4. Audience themes panel
    - Default mode: synthesized presenter themes.
    - Toggle to raw questions.
@@ -539,7 +493,7 @@ Required behavior:
 - [ ] Pulse choices are exactly `I’m with you`, `I’m confused`, `Too fast`, and `Too slow`.
 - [ ] Tapping a choice POSTs a `pulse` interaction.
 - [ ] New attendee browsers receive a `qa_submitter_key` cookie.
-- [ ] Presenter/projector pulse summaries update via SSE after submission.
+- [ ] Presenter pulse summaries update via SSE after submission.
 - [ ] Verify in browser using dev-browser skill.
 
 ### US-004: Submit a public question
@@ -642,17 +596,6 @@ Required behavior:
 - [ ] Hide sets status `hidden`, clears pinned flag, and sets `hidden_at`.
 - [ ] Restore sets status `live` and clears hidden/answered timestamps.
 - [ ] Each action emits SSE refresh.
-- [ ] Verify in browser using dev-browser skill.
-
-### US-013: Display projector live room view
-**Description:** As a presenter/operator, I want a projector-safe display so that the room can see pulse and Q&A themes without private feedback.
-
-**Acceptance Criteria:**
-- [ ] Projector route is public for existing sessions.
-- [ ] Projector shows pulse counts for the last 5 minutes.
-- [ ] Projector defaults to synthesized themes.
-- [ ] Raw mode shows public raw questions including `needs detail` held submissions.
-- [ ] Projector never shows private feedback comments.
 - [ ] Verify in browser using dev-browser skill.
 
 ### US-014: Generate and show QR code
@@ -851,8 +794,6 @@ Required behavior:
   - Returns `202 { ok: true, feedback_id }`.
 - `GET /api/sessions/:id/qa/public.json`
   - Returns public raw Q&A payload.
-- `GET /api/sessions/:id/qa/slides.json`
-  - Returns projector theme payload.
 - `GET /api/sessions/:id/qa/events`
   - SSE stream.
 - `POST /api/sessions/:id/qa/questions`
@@ -904,10 +845,6 @@ Required behavior:
 - `/admin/talks/:id`
 - `/admin/talks/:id/qr`
 - `/admin/talks/:id/ai-run`
-- `/slides/t/:id/qa`
-- `/slides/s/:id/qa`
-- `/embed/t/:id/qa`
-- `/embed/s/:id/qa`
 
 ## 10. UI / UX Requirements
 
@@ -916,8 +853,8 @@ Required behavior:
 - UX-3: The app must not claim anonymity; it may state feedback is private to presenter/organizer.
 - UX-4: Live pulse must be tap-only and not require text entry.
 - UX-5: The presenter/admin workflow must emphasize automation and avoid manual button-heavy operation.
-- UX-6: Projector view must be legible at room scale and safe for public display.
-- UX-7: Raw public questions must be available but should not be the default presenter/projector mode.
+- UX-6: Raw public questions must be available but should not be the default presenter mode.
+- UX-7: Shared-screen control room use must avoid exposing private feedback by default.
 - UX-8: Long talk titles must wrap gracefully without overlapping buttons or status badges.
 - UX-9: Focus-visible states must be obvious for keyboard navigation.
 - UX-10: Any animated live signal motif must respect `prefers-reduced-motion`.
@@ -1038,9 +975,8 @@ Allowed states:
 - Attendee can submit pulse in one tap after opening room page.
 - Attendee can submit a question with no login and no more than one text field.
 - New raw questions appear in attendee stream within 1 second after successful POST under normal conditions.
-- Pulse updates appear in presenter/projector views immediately via SSE under normal conditions.
+- Pulse updates appear in presenter views immediately via SSE under normal conditions.
 - AI/fallback processing produces at least one presenter-ready theme for valid pending questions within a few seconds.
-- Projector view displays pulse and themes without exposing private feedback.
 - Operator can open QR page and share attendee URL within one click from control room.
 - Export CSV downloads without manual database access.
 - Typecheck and Q&A worker tests pass before release.
@@ -1054,7 +990,7 @@ Allowed states:
 - OQ-5: Should AI-generated theme summaries be displayed, or only the concise question text?
 - OQ-6: Should the app support multiple presenters per talk?
 - OQ-7: Should feedback exports include pulse and Q&A interactions, or only private session feedback?
-- OQ-8: Should the projector view auto-cycle between pulse/themes/raw or stay manually toggled?
+- OQ-8: Should the control room add a safer shared-display mode, or keep QR as the only room-facing operator view?
 - OQ-9: Should sessions have explicit scheduled start/end times rather than storing date/time in description?
 - OQ-10: Should the app add rate limiting for public submissions beyond duplicate detection?
 
@@ -1067,9 +1003,8 @@ A recreated equivalent app is complete when:
 - [ ] Public raw Q&A stream updates via SSE and includes queued/grouped/answered/needs-detail states.
 - [ ] Admin login, global dashboard, and room capability auth work.
 - [ ] Control room shows pulse, synthesized themes, raw fallback, utilities, and private feedback summary.
-- [ ] Projector view shows pulse plus synthesized themes by default and raw mode on demand.
 - [ ] Q&A worker produces AI themes when available and deterministic fallback when not.
-- [ ] Theme actions update state and propagate to public/presenter/projector payloads.
+- [ ] Theme actions update state and propagate to public/presenter payloads.
 - [ ] QR page encodes public attendee URL only.
 - [ ] CSV export works for authorized operators.
 - [ ] Talk loading and AI context scripts can populate the DevDays rooms.

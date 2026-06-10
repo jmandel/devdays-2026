@@ -1,116 +1,97 @@
-# DevDays Feedback App
+# DevDays Feedback
 
-A Bun + TypeScript + SQLite attendee feedback and live Q&A app for Josh Mandel's DevDays 2026 talks.
-
-The UX is split clearly between public attendee pages and organizer/operator control rooms. Attendees do not log in; organizers use a global admin key and presenters/moderators can receive room-scoped capability links.
-
-## Features
-
-| Feature | Details |
-|---|---|
-| Attendee talk pages | `/t/:id` pages with talk info, an Open slides button, live Q&A, and quick feedback signals |
-| QR codes | Absolute attendee URLs with quiet zones, now pointing to `/t/:id` |
-| Live Q&A | Public question submit, question list, thumbs up/down voting, and projector view |
-| Feedback signals | Attendees can send “makes sense”, “confused”, “too fast”, “great demo”, tags, ratings, and optional comments at any time |
-| Unified interactions | `attendee_interactions` records question, vote, feedback, and generic public interaction events |
-| Admin/operator | `/admin` dashboard and `/admin/talks/:id` control room for sharing, QR, questions, audience feedback, and export |
-| Capability links | Organizer sends `/r/claim/roomcap_...`; presenter gets room-scoped operator access |
-| SQLite | Runtime state stored locally in `feedback.db` |
-
-## Repository context
-
-```txt
-devdays-2026/
-  prep/talks.md
-  decks/
-  feedback-app/
-```
-
-Runtime files are intentionally gitignored and should not be committed:
-
-```txt
-feedback.db
-.admin-key
-.admin-key.env
-node_modules/
-.qa-agent/
-```
+Conference-room web app for live pulse signals, public Q&A with AI-synthesized
+themes, and private presenter feedback. Bun + TypeScript + SQLite on the
+server, React + Zustand on the client, SSE for live updates. See `prd.md` for
+the full product spec.
 
 ## Quick start
 
 ```bash
+cd feedback-app
 bun install
-bun run typecheck
-PORT=8000 BASE_URL=http://localhost:8000 ADMIN_KEY='local-dev-key' bun run src/server.ts
+bun run load-talks        # populate DevDays rooms from ../prep/talks.md
+bun run load-ai-context   # load prep/deck material into sessions.ai_context
+ADMIN_KEY=change-me bun run dev   # http://localhost:8000
 ```
 
-Open `http://localhost:8000/admin`.
+Without `ADMIN_KEY`, development falls back to `devdays-dev-key`. In
+production (`NODE_ENV=production`) the key is required.
 
-If `ADMIN_KEY` is unset, the app uses the warned local fallback key `devdays-admin`. Do not rely on that for public deployment.
+## Scripts
 
-## Environment variables
+| Command | Purpose |
+| --- | --- |
+| `bun run dev` | Dev server with hot reload on port 8000 |
+| `bun run start` | Production server |
+| `bun run typecheck` | `tsc --noEmit` |
+| `bun test test/qa-worker.test.ts` | Q&A worker/domain tests |
+| `bun run load-talks` | Parse `prep/talks.md` into rooms (`smart`, `ktc`, `checkin`, `llms`, `coin`); clears runtime Q&A/feedback state |
+| `bun run load-ai-context` | Clip prep/deck markdown into `sessions.ai_context` |
+| `bun run cli list\|create\|qa` | Session admin from the terminal |
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `PORT` | `8000` | HTTP port |
-| `DB_PATH` | `./feedback.db` | SQLite database path |
-| `BASE_URL` | `https://devdays-feedback.exe.xyz` | Public base URL for QR codes and operator links |
-| `SLIDES_BASE_URL` | `https://jmandel.github.io/devdays-2026` | Base URL used by the talk loader for slide links |
-| `ADMIN_KEY` | dev fallback: `devdays-admin` | Global admin unlock key |
+## Environment
 
-## Loading DevDays talks
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT` | `8000` | Listen port |
+| `DB_PATH` | `feedback.db` | SQLite file (WAL mode) |
+| `ADMIN_KEY` | dev fallback | Global admin login key |
+| `PUBLIC_BASE_URL` | request origin | Used for share links + Secure cookies |
+| `QA_AGENT_BIN` | `codex` | AI worker binary |
+| `QA_AGENT_DISABLE` | unset | `1` forces deterministic fallback |
+| `QA_AGENT_TIMEOUT_MS` | `90000` | AI worker kill timeout |
+| `QA_AGENT_DIR` | `./.qa-agent` | Run directories (`input.json` / `output.json`) |
+| `REPO_ROOT`, `TALKS_PATH`, `SLIDES_BASE_URL`, `CONTEXT_MAX_CHARS` | — | Loader script overrides |
 
-```bash
-cd feedback-app
-DB_PATH=./feedback.db TALKS_MD=../prep/talks.md bun run load-talks
+## How Q&A processing works
+
+1. Attendee POSTs a question → stored raw in `qa_question_submissions`
+   (`pending`), duplicate retries from the same browser return the existing
+   row.
+2. Processing is debounced ~900 ms; a newer submission cancels an in-flight
+   worker run for that session.
+3. The worker writes `input.json` (session metadata, `ai_context`,
+   pending/held raw submissions, existing themes) into `.qa-agent/<run>/` and
+   runs Codex with workspace-write sandbox, expecting JSON-only
+   `output.json`: `{ "themes": [{ question, state: active|hold|answered|hidden,
+   raw_submission_ids, existing_theme_ids, ... }] }`.
+4. The projection is applied to `qa_questions`; anything left unprojected —
+   or the whole batch when Codex is unavailable/fails — goes through
+   deterministic fallback (promote, similarity-merge, consolidate duplicates,
+   recompute support).
+5. Every run is recorded in `qa_agent_runs` and inspectable at
+   `/admin/talks/:id/ai-run`.
+
+## Surfaces
+
+- `/` room chooser · `/t/:id` attendee page (pulse, public Q&A + voting,
+  private feedback) · `/s/:id` redirect
+- `/admin` global dashboard (key login) · `/admin/talks/:id` control room ·
+  `…/qr` join QR · `…/ai-run` AI audit · `…/export` feedback CSV
+- `/r/claim/roomcap_…` one-room operator capability claim
+
+Auth/capability tokens are stored as SHA-256 hashes only; auth cookies are
+HttpOnly/SameSite=Lax (Secure when the base URL is HTTPS); admin-mutating
+POSTs require same-origin Origin/Referer.
+
+## Deploy (exe.dev VM)
+
+```ini
+# /etc/systemd/system/devdays-feedback.service
+[Unit]
+Description=DevDays Feedback
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/devdays-2026/feedback-app
+Environment=NODE_ENV=production PORT=8000 PUBLIC_BASE_URL=https://feedback.example.com
+EnvironmentFile=/etc/devdays-feedback.env   # ADMIN_KEY=...
+ExecStart=/usr/local/bin/bun run start
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-This clears existing runtime data and creates one session per listed DevDays talk with stable IDs and slide URLs.
-
-| ID | Slides path |
-|---|---|
-| `smart` | `decks/smart-ecosystem/deck.html` |
-| `ktc` | `decks/kill-the-clipboard-panel/deck.html` |
-| `checkin` | `decks/digital-credentials-sd-jwt/deck.html` |
-| `llms` | `decks/llm-agents-health-data/deck.html` |
-| `coin` | `decks/conversational-interop/deck.html` |
-
-## Routes
-
-Public:
-
-- `/t/:id` — canonical attendee talk page
-- `/s/:id` — redirects to `/t/:id`
-- `/slides/s/:id/qa` — projector Q&A view
-- `/api/talks/:id` — public talk data
-- `/api/talks/:id/interactions` — generic public interaction submission
-- `/api/sessions/:id/qa/questions` — submit question
-- `/api/sessions/:id/qa/questions/:questionId/vote` — thumbs up/down vote
-
-Admin/operator:
-
-- `/admin` or `/admin/dashboard` — login/dashboard
-- `/admin/talks/:id` — control room
-- `/admin/talks/:id/qr` — QR/share page
-- `/admin/talks/:id/export` — feedback CSV
-- `/r/claim/:token` — room capability claim
-
-## Systemd deployment
-
-The committed `srv.service` is configured for this exe.dev VM layout. Store the admin key outside git:
-
-```bash
-cd feedback-app
-printf 'ADMIN_KEY=your-four-word-or-better-key\n' > .admin-key.env
-chmod 600 .admin-key.env
-sudo systemctl restart devdays-feedback.service
-```
-
-## Useful commands
-
-```bash
-bun run typecheck
-DB_PATH=/tmp/devdays-feedback-smoke.sqlite TALKS_MD=../prep/talks.md bun run load-talks
-PORT=8000 BASE_URL=http://localhost:8000 ADMIN_KEY='local-dev-key' bun run src/server.ts
-systemctl status devdays-feedback.service --no-pager
-```
+`feedback.db`, `.qa-agent/`, and key files are gitignored.

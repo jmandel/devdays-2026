@@ -1,53 +1,53 @@
-import { Database } from "bun:sqlite";
+/**
+ * Populate sessions.ai_context from prep/deck materials.
+ *
+ * Env overrides:
+ *   DB_PATH            SQLite file (default feedback.db)
+ *   REPO_ROOT          repo root (default ..)
+ *   CONTEXT_MAX_CHARS  clip length per session (default 8000)
+ */
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { createDb } from "../src/db.ts";
+import { now } from "../src/util.ts";
 
-const DB_PATH = process.env.DB_PATH ?? "./feedback.db";
-const ROOT = resolve(process.env.REPO_ROOT ?? "..");
-const MAX_CHARS = Number(process.env.AI_CONTEXT_MAX_CHARS ?? 24000);
-const db = new Database(DB_PATH);
+const REPO_ROOT = resolve(process.env.REPO_ROOT ?? join(import.meta.dir, "..", ".."));
+const MAX_CHARS = Number(process.env.CONTEXT_MAX_CHARS ?? 8000);
 
-function addColumnIfMissing(table: string, column: string, ddl: string) {
-  const cols = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-}
-addColumnIfMissing("sessions", "ai_context", "ai_context TEXT NOT NULL DEFAULT ''");
-
-const deckDirs: Record<string, string> = {
-  smart: "decks/smart-ecosystem",
-  ktc: "decks/kill-the-clipboard-panel",
-  checkin: "decks/digital-credentials-sd-jwt",
-  llms: "decks/llm-agents-health-data",
-  coin: "decks/conversational-interop",
+const SOURCES: Record<string, string[]> = {
+  smart: ["prep/2026-06-16-1030-smart-ecosystem-prep.md", "decks/smart-ecosystem/deck.md"],
+  ktc: ["prep/2026-06-16-1430-kill-the-clipboard-prep.md", "decks/kill-the-clipboard-panel/deck.md"],
+  checkin: [
+    "prep/2026-06-17-1130-digital-credentials-sd-jwt-prep.md",
+    "decks/digital-credentials-sd-jwt/deck.md",
+  ],
+  llms: ["prep/2026-06-18-1030-llm-agents-health-data-prep.md", "decks/llm-agents-health-data/deck.md"],
+  coin: ["prep/2026-06-18-1430-conversational-interop-prep.md", "decks/conversational-interop/deck.md"],
 };
-const extraFiles = ["deck.md", "visual-brief.md", "tutorial.md", "demo-runbook.md", "interview-prep.md", "smart-ecosystem-deck-spec.md", "slide-design-spec.md"];
 
-function readMaybe(path: string) {
-  const full = resolve(ROOT, path);
-  if (!existsSync(full)) return "";
-  return readFileSync(full, "utf8");
-}
-function clip(text: string, max: number) {
-  const clean = text.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{4,}/g, "\n\n\n").trim();
-  return clean.length <= max ? clean : clean.slice(0, max - 80).trimEnd() + "\n\n[truncated]";
-}
+const db = createDb();
+let updated = 0;
 
-const sessions = db.query<{ id: string; title: string; presenter: string; description: string }, []>("SELECT id,title,presenter,description FROM sessions ORDER BY id").all();
-for (const s of sessions) {
-  const parts = [
-    `Session: ${s.title}`,
-    s.presenter ? `Presenter: ${s.presenter}` : "",
-    s.description ? `Schedule/description: ${s.description}` : "",
-  ].filter(Boolean);
-  const deckDir = deckDirs[s.id];
-  if (deckDir) {
-    for (const f of extraFiles) {
-      const rel = `${deckDir}/${f}`;
-      const content = readMaybe(rel);
-      if (content) parts.push(`\n--- ${rel} ---\n${content}`);
-    }
+for (const [sessionId, paths] of Object.entries(SOURCES)) {
+  const exists = db.query("SELECT id FROM sessions WHERE id = ?").get(sessionId);
+  if (!exists) {
+    console.warn(`session ${sessionId} not in DB — run load-talks first; skipping`);
+    continue;
   }
-  const context = clip(parts.join("\n\n"), MAX_CHARS);
-  db.query("UPDATE sessions SET ai_context = ? WHERE id = ?").run(context, s.id);
-  console.log(JSON.stringify({ id: s.id, chars: context.length, deckDir }));
+  const parts: string[] = [];
+  for (const rel of paths) {
+    const full = join(REPO_ROOT, rel);
+    if (!existsSync(full)) {
+      console.warn(`  missing source: ${rel}`);
+      continue;
+    }
+    parts.push(`# Source: ${rel}\n\n${readFileSync(full, "utf-8")}`);
+  }
+  if (parts.length === 0) continue;
+  const context = parts.join("\n\n---\n\n").slice(0, MAX_CHARS);
+  db.run("UPDATE sessions SET ai_context = ?, updated_at = ? WHERE id = ?", [context, now(), sessionId]);
+  updated++;
+  console.log(`context loaded for ${sessionId} (${context.length} chars)`);
 }
+
+console.log(`done — ai_context set for ${updated} session(s)`);

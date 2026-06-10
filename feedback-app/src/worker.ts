@@ -449,6 +449,17 @@ function agentAvailable(): boolean {
   return Bun.which(bin) !== null;
 }
 
+/** Parse QA_AGENT_EXTRA_ARGS: shell-like splitting that keeps `-c key=val` as two args. */
+function parseExtraArgs(raw: string): string[] {
+  const args: string[] = [];
+  const re = /(?:"([^"]*)"|'([^']*)'|(\S+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    args.push(m[1] ?? m[2] ?? m[3]);
+  }
+  return args;
+}
+
 export async function runQaProcessing(db: DB, sessionId: string): Promise<string | null> {
   const input = buildWorkerInput(db, sessionId);
   if (!input) return null;
@@ -479,8 +490,10 @@ export async function runQaProcessing(db: DB, sessionId: string): Promise<string
     } else if (agentAvailable()) {
       const bin = process.env.QA_AGENT_BIN ?? "codex";
       const timeoutMs = Number(process.env.QA_AGENT_TIMEOUT_MS ?? 90_000);
+      const modelArgs = process.env.QA_AGENT_MODEL ? ["--model", process.env.QA_AGENT_MODEL] : [];
+      const extraArgs = parseExtraArgs(process.env.QA_AGENT_EXTRA_ARGS ?? "");
       const proc = Bun.spawn(
-        [bin, "exec", "--sandbox", "workspace-write", "--cd", runDir, "--skip-git-repo-check", AGENT_PROMPT],
+        [bin, ...modelArgs, ...extraArgs, "exec", "--sandbox", "workspace-write", "--cd", runDir, "--skip-git-repo-check", AGENT_PROMPT],
         {
           cwd: runDir,
           stdout: Bun.file(join(runDir, "agent-stdout.log")),

@@ -41,6 +41,8 @@ production (`NODE_ENV=production`) the key is required.
 | `QA_AGENT_BIN` | `codex` | AI worker binary |
 | `QA_AGENT_DISABLE` | unset | `1` forces deterministic fallback |
 | `QA_AGENT_TIMEOUT_MS` | `90000` | AI worker kill timeout |
+| `QA_AGENT_MODEL` | unset | `--model` passed to codex (e.g. `gpt-5.5`) |
+| `QA_AGENT_EXTRA_ARGS` | unset | Newline-separated extra CLI flags; lines starting `"-c "` are split into `-c <value>` pairs |
 | `QA_AGENT_DIR` | `./.qa-agent` | Run directories (`input.json` / `output.json`) |
 | `REPO_ROOT`, `TALKS_PATH`, `SLIDES_BASE_URL`, `CONTEXT_MAX_CHARS` | — | Loader script overrides |
 
